@@ -31,12 +31,14 @@ body {
 #cesiumContainer {
   position: fixed;
   inset: 0;
+  z-index: 1;
 }
 
 #hud,
 #status-panel,
 #warning-panel {
   position: fixed;
+  z-index: 10;
   backdrop-filter: blur(10px);
   border: 1px solid var(--bg-panel-border);
   background: linear-gradient(165deg, var(--bg-panel), rgba(8, 16, 26, 0.42));
@@ -118,6 +120,49 @@ body {
   transform: translateY(1px);
 }
 
+/* ─── Speed tier bar ─── */
+#speed-tier-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+.speed-tier-label {
+  font-family: "Space Mono", monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-right: 0.15rem;
+}
+
+.speed-btn {
+  flex: 1;
+  border: 1px solid rgba(130, 227, 255, 0.3);
+  background: rgba(130, 227, 255, 0.06);
+  color: var(--text-muted);
+  font-family: "Space Mono", monospace;
+  font-size: 0.73rem;
+  padding: 0.32rem 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.speed-btn:hover {
+  background: rgba(130, 227, 255, 0.15);
+  color: var(--text-main);
+}
+
+.speed-btn.active {
+  background: rgba(130, 227, 255, 0.22);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 8px rgba(130, 227, 255, 0.18);
+}
+
 .controls-title {
   margin-top: 0.35rem;
   color: var(--accent-warn);
@@ -144,6 +189,7 @@ body {
   margin-left: -11px;
   margin-top: -11px;
   pointer-events: none;
+  z-index: 10;
 }
 
 #crosshair::before,

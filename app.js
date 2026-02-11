@@ -1,3 +1,5 @@
+import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM } from './geospatial-overlay.js';
+
 (function main() {
   const DEFAULT_CESIUM_TOKEN =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmFjOWQwNy1lYTA5LTRmZWUtODNkOS1jYTAyNWM0OGVkMmMiLCJpZCI6Mzc3Mzg3LCJpYXQiOjE3NjgxNzAyNDN9.rAi0BHXk9BUPEfYxockPHQxu9qvCJ8ifJS0duz7HUl0";
@@ -118,6 +120,38 @@
   let viewer = null;
   let lastTime = performance.now();
 
+  /* ─── Cloud immersion state ─── */
+  let cloudFogOverlay = null;
+  let currentCloudImmersion = 0; // smoothed 0..1
+  let currentCesiumFade = 1.0;   // smoothed terrain visibility (0=hidden, 1=visible)
+  let googleTilesRef = null;      // reference to 3D tileset primitive
+  let osmBuildingsRef = null;     // reference to OSM buildings primitive
+
+  /* ─── Speed multiplier ─── */
+  const SPEED_TIERS = [1, 3, 5, 10];
+  let speedTierIndex = 0;
+  let speedMultiplier = SPEED_TIERS[0];
+
+  function setSpeedTier(index) {
+    speedTierIndex = Math.max(0, Math.min(index, SPEED_TIERS.length - 1));
+    speedMultiplier = SPEED_TIERS[speedTierIndex];
+    updateSpeedTierHUD();
+  }
+
+  function updateSpeedTierHUD() {
+    const el = document.getElementById("hud-speed-tier");
+    if (el) {
+      el.textContent = `${speedMultiplier}x`;
+    }
+    // Update button states
+    SPEED_TIERS.forEach((tier, i) => {
+      const btn = document.getElementById(`speed-btn-${tier}`);
+      if (btn) {
+        btn.classList.toggle("active", i === speedTierIndex);
+      }
+    });
+  }
+
   function setFlightStatus(text, isWarning) {
     HUD.flightStatus.textContent = text;
     HUD.flightStatus.style.color = isWarning ? "#ffd36f" : "#d9ecff";
@@ -221,27 +255,30 @@
     const verticalInput = (isDown("Space") ? 1 : 0) - (isDown("ShiftLeft") || isDown("ShiftRight") ? 1 : 0);
     const boost = isDown("ControlLeft") || isDown("ControlRight") ? FLIGHT.boostMultiplier : 1.0;
 
+    // Speed multiplier scales translational movement only (yaw stays default)
+    const sm = speedMultiplier;
+
     scratch.acceleration.x = 0.0;
     scratch.acceleration.y = 0.0;
     scratch.acceleration.z = 0.0;
 
     Cesium.Cartesian3.multiplyByScalar(
       scratch.forward,
-      forwardInput * FLIGHT.forwardAcceleration * boost,
+      forwardInput * FLIGHT.forwardAcceleration * boost * sm,
       scratch.velocityStep,
     );
     Cesium.Cartesian3.add(scratch.acceleration, scratch.velocityStep, scratch.acceleration);
 
     Cesium.Cartesian3.multiplyByScalar(
       scratch.right,
-      strafeInput * FLIGHT.strafeAcceleration,
+      strafeInput * FLIGHT.strafeAcceleration * sm,
       scratch.velocityStep,
     );
     Cesium.Cartesian3.add(scratch.acceleration, scratch.velocityStep, scratch.acceleration);
 
     Cesium.Cartesian3.multiplyByScalar(
       scratch.up,
-      verticalInput * FLIGHT.verticalAcceleration,
+      verticalInput * FLIGHT.verticalAcceleration * sm,
       scratch.velocityStep,
     );
     Cesium.Cartesian3.add(scratch.acceleration, scratch.velocityStep, scratch.acceleration);
@@ -252,11 +289,12 @@
     const drag = Math.exp(-FLIGHT.linearDrag * dt);
     Cesium.Cartesian3.multiplyByScalar(drone.velocity, drag, drone.velocity);
 
+    const effectiveMaxSpeed = FLIGHT.maxSpeedMetersPerSecond * sm;
     const speed = Cesium.Cartesian3.magnitude(drone.velocity);
-    if (speed > FLIGHT.maxSpeedMetersPerSecond) {
+    if (speed > effectiveMaxSpeed) {
       Cesium.Cartesian3.multiplyByScalar(
         drone.velocity,
-        FLIGHT.maxSpeedMetersPerSecond / speed,
+        effectiveMaxSpeed / speed,
         drone.velocity,
       );
     }
@@ -358,6 +396,11 @@
         event.preventDefault();
         resetPosition();
       }
+      // Speed tier keys: 1 = 1x, 2 = 3x, 3 = 5x, 4 = 10x
+      if (event.code === "Digit1") setSpeedTier(0);
+      if (event.code === "Digit2") setSpeedTier(1);
+      if (event.code === "Digit3") setSpeedTier(2);
+      if (event.code === "Digit4") setSpeedTier(3);
     });
 
     document.addEventListener("keyup", (event) => {
@@ -383,6 +426,15 @@
         viewer.canvas.requestPointerLock();
       }
     });
+
+    // Speed tier button clicks
+    SPEED_TIERS.forEach((tier, i) => {
+      const btn = document.getElementById(`speed-btn-${tier}`);
+      if (btn) {
+        btn.addEventListener("click", () => setSpeedTier(i));
+      }
+    });
+    updateSpeedTierHUD();
   }
 
   async function buildViewer() {
@@ -411,6 +463,13 @@
       baseLayerPicker: false,
       scene3DOnly: true,
       requestRenderMode: false,
+      // Enable transparent canvas so three-geospatial sky shows through
+      contextOptions: {
+        webgl: {
+          alpha: true,
+          premultipliedAlpha: true,
+        },
+      },
     });
 
     viewer.scene.screenSpaceCameraController.enableInputs = false;
@@ -418,8 +477,17 @@
     viewer.scene.globe.enableLighting = true;
     viewer.scene.globe.maximumScreenSpaceError = 0.85;
     viewer.scene.highDynamicRange = true;
-    viewer.scene.skyAtmosphere.show = true;
+
+    // Disable Cesium's built-in sky — three-geospatial provides a physically-accurate replacement
+    viewer.scene.skyAtmosphere.show = false;
+    if (viewer.scene.skyBox) {
+      viewer.scene.skyBox.show = false;
+    }
+    if (viewer.scene.sun) {
+      viewer.scene.sun.show = false;
+    }
     viewer.scene.moon.show = false;
+    viewer.scene.backgroundColor = Cesium.Color.TRANSPARENT;
     viewer.scene.fog.enabled = true;
     viewer.scene.fog.density = 0.0001;
     viewer.scene.shadowMap.enabled = true;
@@ -462,6 +530,7 @@
           );
         }
         viewer.scene.primitives.add(googleTiles);
+        googleTilesRef = googleTiles;  // keep reference for cloud occlusion
         datasetStatus = "Google Photorealistic 3D Tiles + Cesium lighting";
         usedGooglePhotorealisticTiles = true;
       } catch (error) {
@@ -473,6 +542,7 @@
       try {
         const osmBuildings = await Cesium.createOsmBuildingsAsync();
         viewer.scene.primitives.add(osmBuildings);
+        osmBuildingsRef = osmBuildings;  // keep reference for cloud occlusion
         datasetStatus = "Cesium World Terrain + OSM Buildings";
       } catch (error) {
         console.warn("OSM Buildings failed to load:", error);
@@ -480,6 +550,106 @@
     }
 
     HUD.datasetStatus.textContent = `Active world stack: ${datasetStatus}`;
+  }
+
+  /* ─── Cloud Immersion Update ─── */
+  function createCloudFogOverlay() {
+    cloudFogOverlay = document.createElement('div');
+    cloudFogOverlay.id = 'cloud-fog-overlay';
+    cloudFogOverlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 3;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      background: radial-gradient(
+        ellipse at 50% 50%,
+        rgba(220, 225, 235, 0.97) 0%,
+        rgba(195, 205, 220, 0.93) 35%,
+        rgba(175, 185, 200, 0.88) 65%,
+        rgba(160, 170, 185, 0.82) 100%
+      );
+      mix-blend-mode: normal;
+    `;
+    document.body.insertBefore(cloudFogOverlay, document.getElementById('crosshair'));
+  }
+
+  function updateCloudImmersion(dt) {
+    if (!cloudFogOverlay || !viewer) return;
+
+    // Get current altitude MSL from the drone's cartographic position
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+    const altitudeMSL = scratch.cartographic.height;
+
+    const cloudState = getCloudImmersionState(altitudeMSL);
+
+    // Smooth the immersion factor to prevent jarring transitions
+    const lerpSpeed = 4.0; // how fast to transition (higher = faster)
+    const alpha = 1.0 - Math.exp(-lerpSpeed * dt);
+    currentCloudImmersion += (cloudState.immersion - currentCloudImmersion) * alpha;
+
+    // Clamp near-zero to zero to prevent perpetual micro-opacity
+    if (currentCloudImmersion < 0.005) currentCloudImmersion = 0;
+    if (currentCloudImmersion > 0.995) currentCloudImmersion = 1;
+
+    /* ─── Fog overlay (in-cloud whiteout) ─── */
+    cloudFogOverlay.style.opacity = currentCloudImmersion.toFixed(3);
+
+    /* ─── Three.js overlay z-index ─── */
+    // Below the cloud core: overlay behind Cesium (z-index 0) so terrain renders on top.
+    // Inside / above the cloud core: overlay above Cesium (z-index 2) so cloud tops
+    // and sky are visible when Cesium terrain is hidden. The fog overlay (z-index 3)
+    // masks this switch while inside the dense core (immersion ≈ 1).
+    const overlayEl = document.getElementById('geospatial-overlay');
+    if (overlayEl) {
+      overlayEl.style.zIndex = altitudeMSL >= CLOUD_BAND_CORE_BOTTOM ? '2' : '0';
+    }
+
+    /* ─── Cesium terrain / tile visibility ─── */
+    // Compute target fade: 0 = hidden, 1 = visible.
+    //   below      → 1.0  (terrain fully visible)
+    //   entering   → fades with immersion (fog covers terrain anyway)
+    //   inside / exiting / above → 0.0  (terrain hidden, cloud tops visible)
+    let targetFade;
+    if (cloudState.state === 'below') {
+      targetFade = 1.0;
+    } else if (cloudState.state === 'entering') {
+      targetFade = 1.0 - cloudState.immersion;
+    } else {
+      targetFade = 0.0;
+    }
+
+    // Smooth the fade
+    currentCesiumFade += (targetFade - currentCesiumFade) * alpha;
+    if (currentCesiumFade < 0.01) currentCesiumFade = 0;
+    if (currentCesiumFade > 0.99) currentCesiumFade = 1;
+
+    // Apply visibility to Cesium globe
+    if (viewer.scene.globe) {
+      viewer.scene.globe.show = currentCesiumFade > 0.01;
+    }
+
+    // Apply visibility to 3D tile primitives
+    if (googleTilesRef) {
+      googleTilesRef.show = currentCesiumFade > 0.01;
+    }
+    if (osmBuildingsRef) {
+      osmBuildingsRef.show = currentCesiumFade > 0.01;
+    }
+
+    // Disable Cesium fog & post-processing when terrain is hidden to ensure
+    // the Cesium canvas is fully transparent and the Three.js overlay shows through.
+    if (currentCesiumFade < 0.01) {
+      viewer.scene.fog.enabled = false;
+    } else {
+      viewer.scene.fog.enabled = true;
+      viewer.scene.fog.density = currentCesiumFade < 1.0
+        ? 0.0001 + (1.0 - currentCesiumFade) * 0.005
+        : 0.0001;
+    }
   }
 
   function stepFrame(now) {
@@ -495,6 +665,13 @@
     updateWorldAxes();
     updateCamera();
     updateHudReadout();
+
+    // Update cloud immersion effects (fog overlay + Cesium visibility)
+    updateCloudImmersion(dt);
+
+    // Render the three-geospatial atmospheric overlay in sync with the Cesium camera.
+    // Wrapped in try-catch so overlay errors never break the flight loop.
+    try { updateGeospatialOverlay(viewer); } catch (_) {}
   }
 
   async function init() {
@@ -504,8 +681,14 @@
       await loadWorldDetailLayers();
       setupInputHandlers();
 
+      // Create the cloud fog overlay element
+      createCloudFogOverlay();
+
       resetPosition();
       lastTime = performance.now();
+
+      // Start the frame loop immediately so flight controls work
+      // even while the atmospheric overlay is still loading textures.
       viewer.clock.onTick.addEventListener(() => {
         stepFrame(performance.now());
       });
@@ -514,6 +697,13 @@
         "Click Engage to lock pointer and start first-person flight.",
         true,
       );
+
+      // Initialize the three-geospatial atmospheric overlay asynchronously.
+      // This precomputes atmosphere textures and streams cloud data — it can
+      // take several seconds but must never block the flight loop.
+      initGeospatialOverlay(viewer).catch((err) => {
+        console.error('[init] Atmospheric overlay failed to initialize:', err);
+      });
     } catch (error) {
       console.error(error);
       HUD.datasetStatus.textContent = "Initialization failed.";
