@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "^1.41.0",
     "@takram/three-atmosphere": "^0.16.0",
     "@takram/three-clouds": "^0.6.0",
     "@takram/three-geospatial": "^0.6.0",

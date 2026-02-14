@@ -1,4 +1,5 @@
 import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM } from './geospatial-overlay.js';
+import { GoogleGenAI } from '@google/genai';
 
 (function main() {
   const DEFAULT_CESIUM_TOKEN =
@@ -75,7 +76,17 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     "KeyA",
     "KeyD",
     "KeyC",
+    "KeyV",
   ]);
+
+  /* ─── Gemini Vision Autopilot ─── */
+  const GEMINI_API_KEY = "AIzaSyDQdSe1QCJwz7PyyuvMxsHNOOHaVQb4Ako";
+  let geminiActive = false;
+  let geminiRecorder = null;
+  let geminiCycleTimeout = null;
+  let geminiPending = false;
+  let geminiCommandQueue = []; // queued movement commands
+  let geminiCommandTimer = null; // setTimeout for current command execution
 
   const query = new URLSearchParams(window.location.search);
   const configuredCesiumToken =
@@ -666,6 +677,216 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     updateCamera();
   }
 
+  function startGeminiRecording() {
+    if (!viewer) return;
+    const stream = viewer.canvas.captureStream(10); // 10 fps
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
+      ? 'video/webm;codecs=vp8'
+      : 'video/webm';
+    geminiRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 500000 });
+    const chunks = [];
+    geminiRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    geminiRecorder.onstop = async () => {
+      if (!geminiActive) return;
+      const blob = new Blob(chunks, { type: mimeType });
+      await sendToGemini(blob, mimeType);
+      // Start next cycle if still active
+      if (geminiActive) {
+        startGeminiRecording();
+      }
+    };
+    geminiRecorder.start();
+    // Stop after 5 seconds to send the clip
+    geminiCycleTimeout = setTimeout(() => {
+      if (geminiRecorder && geminiRecorder.state === 'recording') {
+        geminiRecorder.stop();
+      }
+    }, 5000);
+  }
+
+  const GEMINI_PILOT_PROMPT = `You are piloting an FPV drone in a 3D city simulator. You see the live camera feed.
+
+Your mission: fly between buildings without hitting them. Navigate through streets and gaps.
+
+You control the drone by outputting a sequence of movement commands. Each command is:
+DIRECTION-SPEED-TIME
+
+DIRECTION: FORWARD, BACKWARD, LEFT, RIGHT, UP, DOWN
+SPEED: speed multiplier (integer). 10 is slow/careful, 30 is moderate, 60 is fast, 100 is very fast. Use lower speeds near buildings.
+TIME: duration in seconds (1-5)
+
+You can chain multiple commands, one per line. Example:
+FORWARD-30-3
+LEFT-20-2
+FORWARD-50-4
+UP-15-1
+
+Rules:
+- Look at the video feed and decide where to go next
+- If buildings are close, slow down and steer around them
+- Prefer flying forward through open spaces between buildings
+- If you're about to hit something, go UP or turn LEFT/RIGHT
+- Output ONLY the commands, nothing else. No explanation. 3-6 commands per response.`;
+
+  const DIRECTION_KEYS = {
+    FORWARD: 'ArrowUp',
+    BACKWARD: 'ArrowDown',
+    LEFT: 'ArrowLeft',
+    RIGHT: 'ArrowRight',
+    UP: 'KeyW',
+    DOWN: 'KeyS',
+  };
+
+  function parseGeminiCommands(text) {
+    const commands = [];
+    const lines = text.trim().split('\n');
+    for (const line of lines) {
+      const match = line.trim().match(/^(FORWARD|BACKWARD|LEFT|RIGHT|UP|DOWN)-(\d+)-(\d+)$/i);
+      if (match) {
+        commands.push({
+          direction: match[1].toUpperCase(),
+          speed: Math.max(1, Math.min(100, parseInt(match[2], 10))),
+          time: Math.max(1, Math.min(5, parseInt(match[3], 10))),
+        });
+      }
+    }
+    return commands;
+  }
+
+  function executeGeminiCommands(commands) {
+    const textEl = document.getElementById('gemini-text');
+    geminiCommandQueue = commands.slice();
+    executeNextCommand(textEl);
+  }
+
+  function executeNextCommand(textEl) {
+    if (!geminiActive || geminiCommandQueue.length === 0) {
+      // Done executing — start next recording cycle
+      if (geminiActive) startGeminiRecording();
+      return;
+    }
+
+    const cmd = geminiCommandQueue.shift();
+    const key = DIRECTION_KEYS[cmd.direction];
+    if (!key) {
+      executeNextCommand(textEl);
+      return;
+    }
+
+    // Set speed: map cmd.speed to the closest tier
+    // Tiers: 0=1x, 1=3x, 2=5x, 3=10x
+    // cmd.speed 1-20 → tier 3 (10x), 21-40 → tier 3, we'll use raw multiplier instead
+    // Actually let's directly set speedMultiplier to cmd.speed for finer control
+    speedMultiplier = cmd.speed;
+
+    if (textEl) {
+      const remaining = [cmd, ...geminiCommandQueue].map(c => `${c.direction}-${c.speed}-${c.time}`).join('\n');
+      textEl.textContent = `Executing:\n${remaining}`;
+    }
+
+    // Press the key
+    keyState.add(key);
+
+    // Release after cmd.time seconds, then execute next
+    geminiCommandTimer = setTimeout(() => {
+      keyState.delete(key);
+      // Small gap before next command
+      geminiCommandTimer = setTimeout(() => executeNextCommand(textEl), 100);
+    }, cmd.time * 1000);
+  }
+
+  async function sendToGemini(blob, mimeType) {
+    const textEl = document.getElementById('gemini-text');
+    geminiPending = true;
+    try {
+      const arrayBuf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binary);
+
+      if (textEl) textEl.textContent = 'Thinking...';
+
+      const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+      const response = await ai.models.generateContentStream({
+        model: 'gemini-3-flash-preview',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { data: base64, mimeType } },
+              { text: GEMINI_PILOT_PROMPT },
+            ],
+          },
+        ],
+      });
+
+      let fullText = '';
+      for await (const chunk of response) {
+        if (chunk.text) {
+          fullText += chunk.text;
+        }
+      }
+
+      console.log('[Gemini] Raw response:', fullText);
+      const commands = parseGeminiCommands(fullText);
+
+      if (commands.length > 0) {
+        if (textEl) textEl.textContent = commands.map(c => `${c.direction}-${c.speed}-${c.time}`).join('\n');
+        executeGeminiCommands(commands);
+      } else {
+        if (textEl) textEl.textContent = 'No valid commands. Retrying...';
+        console.warn('[Gemini] No parseable commands from:', fullText);
+        if (geminiActive) startGeminiRecording();
+      }
+    } catch (err) {
+      console.error('[Gemini] API error:', err);
+      if (textEl) textEl.textContent = 'Error: ' + err.message;
+      if (geminiActive) startGeminiRecording();
+    }
+    geminiPending = false;
+  }
+
+  function stopGemini() {
+    if (geminiCycleTimeout) {
+      clearTimeout(geminiCycleTimeout);
+      geminiCycleTimeout = null;
+    }
+    if (geminiCommandTimer) {
+      clearTimeout(geminiCommandTimer);
+      geminiCommandTimer = null;
+    }
+    geminiCommandQueue = [];
+    // Release any keys Gemini might be holding
+    Object.values(DIRECTION_KEYS).forEach(k => keyState.delete(k));
+    // Restore speed to tier 0
+    setSpeedTier(0);
+    if (geminiRecorder && geminiRecorder.state === 'recording') {
+      geminiRecorder.onstop = null;
+      geminiRecorder.stop();
+    }
+    geminiRecorder = null;
+    const overlay = document.getElementById('gemini-overlay');
+    if (overlay) overlay.style.display = 'none';
+  }
+
+  function toggleGemini() {
+    geminiActive = !geminiActive;
+    if (geminiActive) {
+      const overlay = document.getElementById('gemini-overlay');
+      const textEl = document.getElementById('gemini-text');
+      if (overlay) overlay.style.display = 'block';
+      if (textEl) textEl.textContent = 'Recording 5s clip...';
+      startGeminiRecording();
+    } else {
+      stopGemini();
+    }
+  }
+
   function setupInputHandlers() {
     document.addEventListener("keydown", (event) => {
       keyState.add(event.code);
@@ -679,6 +900,10 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       if (event.code === "KeyC") {
         event.preventDefault();
         toggleCameraMode();
+      }
+      if (event.code === "KeyV") {
+        event.preventDefault();
+        toggleGemini();
       }
       // Speed tier keys: 1 = 1x, 2 = 3x, 3 = 5x, 4 = 10x
       if (event.code === "Digit1") setSpeedTier(0);
