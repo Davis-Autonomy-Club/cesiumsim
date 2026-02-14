@@ -1,4 +1,5 @@
 import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM } from './geospatial-overlay.js';
+import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreativeMode, updateCreativeMode, getFreeCamReadout, setHighlightVisible } from './creative-mode/creative-mode.js';
 
 (function main() {
   const DEFAULT_CESIUM_TOKEN =
@@ -75,6 +76,9 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     "KeyA",
     "KeyD",
     "KeyC",
+    "KeyG",
+    "KeyQ",
+    "KeyE",
   ]);
 
   const query = new URLSearchParams(window.location.search);
@@ -199,7 +203,7 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
   let osmBuildingsRef = null;     // reference to OSM buildings primitive
 
   /* ─── Speed multiplier ─── */
-  const SPEED_TIERS = [1, 3, 5, 10];
+  const SPEED_TIERS = [1, 3, 5, 10, 20];
   let speedTierIndex = 0;
   let speedMultiplier = SPEED_TIERS[0];
 
@@ -608,6 +612,21 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
   }
 
   function updateHudReadout() {
+    if (isCreativeModeActive()) {
+      const r = getFreeCamReadout();
+      HUD.speed.textContent = `${(r.speedMs * 3.6).toFixed(1)} km/h`;
+      HUD.altitudeAgl.textContent = `${r.agl.toFixed(1)} m`;
+      HUD.altitudeMsl.textContent = `${r.altMsl.toFixed(1)} m`;
+      HUD.heading.textContent = `${r.headingDeg.toFixed(1)} deg`;
+      HUD.attitude.textContent = `0.0 deg / 0.0 deg`;
+      HUD.position.textContent = `${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}`;
+      if (HUD.buildingCol) {
+        HUD.buildingCol.textContent = 'OFF';
+        HUD.buildingCol.style.color = '';
+      }
+      return;
+    }
+
     Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
     const speedMetersPerSecond = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
     const agl = Math.max(0.0, scratch.cartographic.height - drone.lastGroundHeight);
@@ -674,17 +693,35 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       }
       if (event.code === "KeyR") {
         event.preventDefault();
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
         resetPosition();
+        setFlightStatus("Flight active. W/S ascend/descend, arrows move/yaw, A/D strafe.", false);
       }
       if (event.code === "KeyC") {
         event.preventDefault();
-        toggleCameraMode();
+        if (!isCreativeModeActive()) toggleCameraMode();
+      }
+      if (event.code === "KeyG") {
+        event.preventDefault();
+        if (isCreativeModeActive()) {
+          exitCreativeMode();
+          setHighlightVisible(false);
+          setFlightStatus("Flight active. W/S ascend/descend, arrows move/yaw, A/D strafe.", false);
+        } else {
+          if (cameraMode === CAMERA_FPV) toggleCameraMode();
+          drone.visualPitch = 0;
+          drone.visualRoll = 0;
+          enterCreativeMode(drone.position, drone.heading);
+          setHighlightVisible(true);
+          setFlightStatus("Creative Mode active. G to return to drone.", false);
+        }
       }
       // Speed tier keys: 1 = 1x, 2 = 3x, 3 = 5x, 4 = 10x
       if (event.code === "Digit1") setSpeedTier(0);
       if (event.code === "Digit2") setSpeedTier(1);
       if (event.code === "Digit3") setSpeedTier(2);
       if (event.code === "Digit4") setSpeedTier(3);
+      if (event.code === "Digit5") setSpeedTier(4);
     });
 
     document.addEventListener("keyup", (event) => {
@@ -703,8 +740,9 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     const ucdBtn = document.getElementById("teleport-ucd");
     if (ucdBtn) {
       ucdBtn.addEventListener("click", () => {
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
         teleportTo(UCD_LOCATION);
-        // Remove focus from button so keyboard controls work immediately
+        setFlightStatus("Flight active. W/S ascend/descend, arrows move/yaw, A/D strafe.", false);
         ucdBtn.blur();
       });
     }
@@ -988,10 +1026,12 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       viewer.camera.frustum.fov = FPV_FOV;
       if (fpvOverlay) fpvOverlay.style.display = 'block';
       if (droneEntity) droneEntity.show = false;
+      setHighlightVisible(true);
     } else {
       viewer.camera.frustum.fov = CHASE_FOV;
       if (fpvOverlay) fpvOverlay.style.display = 'none';
       if (droneEntity) droneEntity.show = true;
+      setHighlightVisible(false);
     }
   }
 
@@ -1070,15 +1110,19 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     const dt = Math.min(0.033, Math.max(0.001, (now - lastTime) / 1000.0));
     lastTime = now;
 
-    applyOrientationInput(dt);
-    updateHorizontalAxes();
-    applyDroneMovement(dt);
-    enforceTerrainClearance();
-    updateHorizontalAxes();     // recompute at final position
-    updateDroneOrientation();
-    updateWorldAxes();
-    enforceBuildingCollision();
-    updateCamera();
+    if (isCreativeModeActive()) {
+      updateCreativeMode(dt, keyState, speedMultiplier, FLIGHT, viewer);
+    } else {
+      applyOrientationInput(dt);
+      updateHorizontalAxes();
+      applyDroneMovement(dt);
+      enforceTerrainClearance();
+      updateHorizontalAxes();     // recompute at final position
+      updateDroneOrientation();
+      updateWorldAxes();
+      enforceBuildingCollision();
+      updateCamera();
+    }
     updateHudReadout();
 
     // Update cloud immersion effects (fog overlay + Cesium visibility)
@@ -1127,6 +1171,7 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       // Create the cloud fog overlay element
       createCloudFogOverlay();
       createFpvOverlay();
+      initCreativeMode(viewer);
 
       resetPosition();
       lastTime = performance.now();
