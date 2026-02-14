@@ -19,20 +19,21 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
   };
 
   const FLIGHT = {
-    forwardAcceleration: 44.0,
-    brakeDragMultiplier: 4.0,
-    maxSpeedMetersPerSecond: 92.0,
-    linearDrag: 1.5,
-    keyboardYawRate: Cesium.Math.toRadians(55.0),
-    keyboardPitchRate: Cesium.Math.toRadians(40.0),
-    rollRate: Cesium.Math.toRadians(65.0),
-    autoLevelRollRate: 4.0,
-    maxPitch: Cesium.Math.toRadians(85.0),
-    maxRoll: Cesium.Math.toRadians(75.0),
-    minimumClearance: 4.0,
-    // 3rd person camera: behind and above the plane
-    cameraForwardOffset: -25.0,
-    cameraUpOffset: 8.0,
+    horizontalAcceleration: 22.0,
+    maxHorizontalSpeed: 20.0,
+    horizontalDrag: 6.0,
+    verticalAcceleration: 14.0,
+    maxVerticalSpeed: 10.0,
+    verticalDrag: 5.0,
+    yawRate: Cesium.Math.toRadians(90.0),
+    maxVisualPitch: Cesium.Math.toRadians(25.0),
+    maxVisualRoll: Cesium.Math.toRadians(15.0),
+    visualTiltRate: 5.0,
+    visualTiltReturn: 6.0,
+    minimumClearance: 2.0,
+    cameraForwardOffset: -18.0,
+    cameraUpOffset: 6.0,
+    cameraLookAboveOffset: 6.0,
   };
 
   const HUD = {
@@ -57,7 +58,11 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     "ArrowDown",
     "ArrowLeft",
     "ArrowRight",
-    "KeyG",
+    "KeyW",
+    "KeyS",
+    "KeyA",
+    "KeyD",
+    "KeyC",
   ]);
 
   const query = new URLSearchParams(window.location.search);
@@ -88,10 +93,11 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       START_LOCATION.latitude,
       START_LOCATION.height,
     ),
-    velocity: new Cesium.Cartesian3(0.0, 0.0, 0.0),
+    horizontalVelocity: new Cesium.Cartesian3(0.0, 0.0, 0.0),
+    verticalSpeed: 0.0,
     heading: Cesium.Math.toRadians(200.0),
-    pitch: Cesium.Math.toRadians(-2.0),
-    roll: 0.0,
+    visualPitch: 0.0,
+    visualRoll: 0.0,
     orientation: new Cesium.Quaternion(0, 0, 0, 1),
     lastGroundHeight: 0.0,
   };
@@ -102,6 +108,9 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     forward: new Cesium.Cartesian3(),
     right: new Cesium.Cartesian3(),
     up: new Cesium.Cartesian3(),
+    horizontalForward: new Cesium.Cartesian3(),
+    horizontalRight: new Cesium.Cartesian3(),
+    verticalStep: new Cesium.Cartesian3(),
     acceleration: new Cesium.Cartesian3(),
     velocityStep: new Cesium.Cartesian3(),
     movementStep: new Cesium.Cartesian3(),
@@ -116,49 +125,21 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
   let viewer = null;
   let lastTime = performance.now();
 
-  /* ─── F-22 Cesium entity state ─── */
-  const f22Hpr = new Cesium.HeadingPitchRoll();
-  const f22Orientation = new Cesium.Quaternion();
-  let f22Entity = null;
+  /* ─── Drone Cesium entity state ─── */
+  const droneHpr = new Cesium.HeadingPitchRoll();
+  const droneModelOrientation = new Cesium.Quaternion();
+  let droneEntity = null;
 
-  /* ─── Control surface input state (for F-22 animation) ─── */
-  let currentRollInput = 0;
-  let currentPitchInput = 0;
-  let currentYawInput = 0;
-
-  /* ─── Landing gear ─── */
-  let gearDeployed = true;
-  let gearTransition = 1.0; // 1.0 = deployed, 0.0 = retracted
-  const gearScale = new Cesium.Cartesian3(1, 1, 1);
-
-  /* ─── Control surface deflection limits (radians) ─── */
-  /* Realistic F-22 deflections — subtle movement, never detaches from wing */
-  const SURFACE_LIMITS = {
-    aileron: Cesium.Math.toRadians(5),     // outer wing flaps — gentle roll
-    flap: Cesium.Math.toRadians(3),        // inner wing flaps — follow ailerons subtly
-    elevator: Cesium.Math.toRadians(30),   // rear stabilizers — unchanged (user confirmed OK)
-    rudder: Cesium.Math.toRadians(8),      // V-tails — coordinated yaw
-  };
-
-  /* ─── Smoothed surface deflection angles ─── */
-  const surfaceAngle = {
-    leftAileron: 0, rightAileron: 0,
-    leftFlap: 0, rightFlap: 0,
-    leftElevator: 0, rightElevator: 0,
-    leftRudder: 0, rightRudder: 0,
-  };
-
-  /* ─── Scratch quaternions for nodeTransformations ─── */
-  const surfaceQuat = {
-    leftAileron: new Cesium.Quaternion(0, 0, 0, 1),
-    rightAileron: new Cesium.Quaternion(0, 0, 0, 1),
-    leftFlap: new Cesium.Quaternion(0, 0, 0, 1),
-    rightFlap: new Cesium.Quaternion(0, 0, 0, 1),
-    leftElevator: new Cesium.Quaternion(0, 0, 0, 1),
-    rightElevator: new Cesium.Quaternion(0, 0, 0, 1),
-    leftRudder: new Cesium.Quaternion(0, 0, 0, 1),
-    rightRudder: new Cesium.Quaternion(0, 0, 0, 1),
-  };
+  /* ─── Camera mode ─── */
+  const CAMERA_CHASE = 0;
+  const CAMERA_FPV = 1;
+  let cameraMode = CAMERA_CHASE;
+  const CHASE_FOV = Cesium.Math.toRadians(119.6);
+  const FPV_FOV = Cesium.Math.toRadians(140.0);
+  const FPV_PITCH_DOWN = Cesium.Math.toRadians(-45.0);
+  let fpvOverlay = null;
+  let fpvHudAlt = null;
+  let fpvHudSpd = null;
 
   /* ─── Dynamic resolution scaling ─── */
   const DRS = {
@@ -234,8 +215,8 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
 
   function updateDroneOrientation() {
     scratch.hpr.heading = drone.heading;
-    scratch.hpr.pitch = drone.pitch;
-    scratch.hpr.roll = drone.roll;
+    scratch.hpr.pitch = drone.visualPitch;
+    scratch.hpr.roll = drone.visualRoll;
 
     Cesium.Transforms.headingPitchRollQuaternion(
       drone.position,
@@ -255,13 +236,10 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     );
 
     const ch = Math.cos(drone.heading), sh = Math.sin(drone.heading);
-    const cp = Math.cos(drone.pitch), sp = Math.sin(drone.pitch);
-    const cr = Math.cos(drone.roll), sr = Math.sin(drone.roll);
+    const cp = Math.cos(drone.visualPitch), sp = Math.sin(drone.visualPitch);
+    const cr = Math.cos(drone.visualRoll), sr = Math.sin(drone.visualRoll);
 
-    // Forward (nose direction) in ENU: heading + pitch determine thrust vector
-    //   East  = sin(heading) * cos(pitch)
-    //   North = cos(heading) * cos(pitch)
-    //   Up    = sin(pitch)
+    // Forward (nose direction) in ENU — visual only
     scratch.acceleration.x = sh * cp;
     scratch.acceleration.y = ch * cp;
     scratch.acceleration.z = sp;
@@ -269,8 +247,8 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     Cesium.Cartesian3.normalize(scratch.forward, scratch.forward);
 
     // Right and Up before roll (in ENU)
-    const ux = -sh * sp, uy = -ch * sp, uz = cp;   // up_no_roll
-    const rx = ch, ry = -sh, rz = 0;    // right_no_roll
+    const ux = -sh * sp, uy = -ch * sp, uz = cp;
+    const rx = ch, ry = -sh, rz = 0;
 
     // Apply roll rotation around the forward axis
     scratch.acceleration.x = cr * rx - sr * ux;
@@ -286,75 +264,122 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     Cesium.Cartesian3.normalize(scratch.up, scratch.up);
   }
 
-  function applyOrientationInput(dt) {
-    // Left/Right arrows: coordinated turn (roll + yaw)
-    const turnInput = (isDown("ArrowRight") ? 1 : 0) - (isDown("ArrowLeft") ? 1 : 0);
-
-    // Up/Down arrows: pitch (nose up / nose down) — holds angle when released
-    const pitchInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
-
-    // Track control surface inputs for F-22 animation
-    const surfaceSmooth = 1.0 - Math.exp(-12.0 * dt);
-    currentRollInput += (turnInput - currentRollInput) * surfaceSmooth;
-    currentPitchInput += (pitchInput - currentPitchInput) * surfaceSmooth;
-    currentYawInput += (turnInput - currentYawInput) * surfaceSmooth;
-
-    // Roll + yaw from turn input (coordinated turn)
-    drone.roll += turnInput * FLIGHT.rollRate * dt;
-    drone.heading += turnInput * FLIGHT.keyboardYawRate * dt;
-
-    // Pitch from up/down arrows — NO auto-level, pitch holds its angle
-    drone.pitch += pitchInput * FLIGHT.keyboardPitchRate * dt;
-
-    // Auto-level roll only (not pitch)
-    if (turnInput === 0) {
-      const alpha = 1.0 - Math.exp(-FLIGHT.autoLevelRollRate * dt);
-      drone.roll = Cesium.Math.lerp(drone.roll, 0.0, alpha);
-    }
-
-    drone.pitch = Cesium.Math.clamp(drone.pitch, -FLIGHT.maxPitch, FLIGHT.maxPitch);
-    drone.roll = Cesium.Math.clamp(drone.roll, -FLIGHT.maxRoll, FLIGHT.maxRoll);
-    drone.heading = Cesium.Math.zeroToTwoPi(drone.heading);
+  function updateHorizontalAxes() {
+    // Heading-only forward/right in ECEF (no pitch — used for movement and camera)
+    Cesium.Transforms.eastNorthUpToFixedFrame(
+      drone.position,
+      Cesium.Ellipsoid.WGS84,
+      scratch.transform,
+    );
+    const ch = Math.cos(drone.heading), sh = Math.sin(drone.heading);
+    // Forward in ENU: heading only, no pitch
+    scratch.acceleration.x = sh;
+    scratch.acceleration.y = ch;
+    scratch.acceleration.z = 0.0;
+    Cesium.Matrix4.multiplyByPointAsVector(scratch.transform, scratch.acceleration, scratch.horizontalForward);
+    Cesium.Cartesian3.normalize(scratch.horizontalForward, scratch.horizontalForward);
+    // Right in ENU
+    scratch.acceleration.x = ch;
+    scratch.acceleration.y = -sh;
+    scratch.acceleration.z = 0.0;
+    Cesium.Matrix4.multiplyByPointAsVector(scratch.transform, scratch.acceleration, scratch.horizontalRight);
+    Cesium.Cartesian3.normalize(scratch.horizontalRight, scratch.horizontalRight);
   }
 
-  function applyTranslationalInput(dt) {
-    // W = thrust forward, S = brake (increased drag)
-    const thrustInput = isDown("KeyW") ? 1 : 0;
-    const brakeInput = isDown("KeyS") ? 1 : 0;
+  function applyOrientationInput(dt) {
+    // Left/Right arrows: pure yaw (heading rotation only, no visual effect)
+    const turnInput = (isDown("ArrowRight") ? 1 : 0) - (isDown("ArrowLeft") ? 1 : 0);
+    drone.heading += turnInput * FLIGHT.yawRate * dt;
+    drone.heading = Cesium.Math.zeroToTwoPi(drone.heading);
+
+    // Up/Down arrows: forward/backward movement input (drives visual pitch)
+    const moveInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
+
+    // A/D keys: lateral strafe input (drives visual roll)
+    const strafeInput = (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
+
+    // Target visual pitch: forward (ArrowUp) → nose down (negative pitch)
+    const targetPitch = -moveInput * FLIGHT.maxVisualPitch;
+    // Target visual roll: strafe right (D) → tilt right (positive roll)
+    const targetRoll = strafeInput * FLIGHT.maxVisualRoll;
+
+    // Exponential lerp toward targets
+    const tiltAlpha = 1.0 - Math.exp(-FLIGHT.visualTiltRate * dt);
+    const returnAlpha = 1.0 - Math.exp(-FLIGHT.visualTiltReturn * dt);
+
+    const pitchAlpha = moveInput !== 0 ? tiltAlpha : returnAlpha;
+    const rollAlpha = strafeInput !== 0 ? tiltAlpha : returnAlpha;
+
+    drone.visualPitch = Cesium.Math.lerp(drone.visualPitch, targetPitch, pitchAlpha);
+    drone.visualRoll = Cesium.Math.lerp(drone.visualRoll, targetRoll, rollAlpha);
+
+    drone.visualPitch = Cesium.Math.clamp(drone.visualPitch, -FLIGHT.maxVisualPitch, FLIGHT.maxVisualPitch);
+    drone.visualRoll = Cesium.Math.clamp(drone.visualRoll, -FLIGHT.maxVisualRoll, FLIGHT.maxVisualRoll);
+  }
+
+  function applyDroneMovement(dt) {
     const sm = speedMultiplier;
 
-    // Thrust along the plane's forward vector only
-    scratch.acceleration.x = 0.0;
-    scratch.acceleration.y = 0.0;
-    scratch.acceleration.z = 0.0;
+    // ── Horizontal channel: Up/Down arrows → forward/back, A/D → strafe ──
+    const moveInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
+    const strafeInput = (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
 
-    Cesium.Cartesian3.multiplyByScalar(
-      scratch.forward,
-      thrustInput * FLIGHT.forwardAcceleration * sm,
-      scratch.velocityStep,
-    );
-    Cesium.Cartesian3.add(scratch.acceleration, scratch.velocityStep, scratch.acceleration);
-
-    Cesium.Cartesian3.multiplyByScalar(scratch.acceleration, dt, scratch.velocityStep);
-    Cesium.Cartesian3.add(drone.velocity, scratch.velocityStep, drone.velocity);
-
-    // Drag: much heavier when braking
-    const dragCoeff = brakeInput ? FLIGHT.linearDrag * FLIGHT.brakeDragMultiplier : FLIGHT.linearDrag;
-    const drag = Math.exp(-dragCoeff * dt);
-    Cesium.Cartesian3.multiplyByScalar(drone.velocity, drag, drone.velocity);
-
-    const effectiveMaxSpeed = FLIGHT.maxSpeedMetersPerSecond * sm;
-    const speed = Cesium.Cartesian3.magnitude(drone.velocity);
-    if (speed > effectiveMaxSpeed) {
+    if (moveInput !== 0) {
       Cesium.Cartesian3.multiplyByScalar(
-        drone.velocity,
-        effectiveMaxSpeed / speed,
-        drone.velocity,
+        scratch.horizontalForward,
+        moveInput * FLIGHT.horizontalAcceleration * sm * dt,
+        scratch.velocityStep,
+      );
+      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+    }
+
+    if (strafeInput !== 0) {
+      Cesium.Cartesian3.multiplyByScalar(
+        scratch.horizontalRight,
+        strafeInput * FLIGHT.horizontalAcceleration * sm * dt,
+        scratch.velocityStep,
+      );
+      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+    }
+
+    // Horizontal drag (exponential)
+    const hDrag = Math.exp(-FLIGHT.horizontalDrag * dt);
+    Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, hDrag, drone.horizontalVelocity);
+
+    // Clamp horizontal speed
+    const effectiveMaxH = FLIGHT.maxHorizontalSpeed * sm;
+    const hSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
+    if (hSpeed > effectiveMaxH) {
+      Cesium.Cartesian3.multiplyByScalar(
+        drone.horizontalVelocity,
+        effectiveMaxH / hSpeed,
+        drone.horizontalVelocity,
       );
     }
 
-    Cesium.Cartesian3.multiplyByScalar(drone.velocity, dt, scratch.movementStep);
+    // ── Vertical channel: W/S → thrust along surface normal ──
+    const vertInput = (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
+
+    if (vertInput !== 0) {
+      drone.verticalSpeed += vertInput * FLIGHT.verticalAcceleration * sm * dt;
+    }
+
+    // Vertical drag (exponential)
+    drone.verticalSpeed *= Math.exp(-FLIGHT.verticalDrag * dt);
+
+    // Clamp vertical speed
+    const effectiveMaxV = FLIGHT.maxVerticalSpeed * sm;
+    drone.verticalSpeed = Cesium.Math.clamp(drone.verticalSpeed, -effectiveMaxV, effectiveMaxV);
+
+    // ── Combine into position update ──
+    // Horizontal movement
+    Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, dt, scratch.movementStep);
     Cesium.Cartesian3.add(drone.position, scratch.movementStep, drone.position);
+
+    // Vertical movement along surface normal
+    Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
+    Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, drone.verticalSpeed * dt, scratch.verticalStep);
+    Cesium.Cartesian3.add(drone.position, scratch.verticalStep, drone.position);
   }
 
   function enforceTerrainClearance() {
@@ -374,54 +399,90 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
         drone.position,
       );
 
+      // Kill downward vertical speed
+      if (drone.verticalSpeed < 0.0) {
+        drone.verticalSpeed = 0.0;
+      }
+
+      // Strip any downward component from horizontal velocity
       Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
-      const verticalSpeed = Cesium.Cartesian3.dot(drone.velocity, scratch.surfaceNormal);
-      if (verticalSpeed < 0.0) {
-        Cesium.Cartesian3.multiplyByScalar(
-          scratch.surfaceNormal,
-          verticalSpeed,
-          scratch.velocityStep,
-        );
-        Cesium.Cartesian3.subtract(drone.velocity, scratch.velocityStep, drone.velocity);
+      const hVertComponent = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
+      if (hVertComponent < 0.0) {
+        Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, hVertComponent, scratch.velocityStep);
+        Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
       }
     }
   }
 
   function updateCamera() {
-    // Use geodetic surface normal (true world-up) so the horizon stays level.
-    // The F-22 model visually rolls in the viewport; the sky never tilts.
     Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
 
-    // Camera position: behind along forward, above along world-up
-    Cesium.Cartesian3.multiplyByScalar(
-      scratch.forward,
-      FLIGHT.cameraForwardOffset,
-      scratch.cameraOffset,
-    );
-    Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, FLIGHT.cameraUpOffset, scratch.upOffset);
-    Cesium.Cartesian3.add(drone.position, scratch.cameraOffset, scratch.cameraPosition);
-    Cesium.Cartesian3.add(scratch.cameraPosition, scratch.upOffset, scratch.cameraPosition);
+    if (cameraMode === CAMERA_FPV) {
+      // FPV: camera at drone position, looking forward-and-down at 45 degrees
+      // Direction = cos(45)*forward + sin(45)*(-up) in ECEF
+      const cf = Math.cos(FPV_PITCH_DOWN); // cos(-45) ≈ 0.707
+      const sf = Math.sin(FPV_PITCH_DOWN); // sin(-45) ≈ -0.707
+      scratch.cameraOffset.x = cf * scratch.horizontalForward.x + sf * scratch.surfaceNormal.x;
+      scratch.cameraOffset.y = cf * scratch.horizontalForward.y + sf * scratch.surfaceNormal.y;
+      scratch.cameraOffset.z = cf * scratch.horizontalForward.z + sf * scratch.surfaceNormal.z;
+      Cesium.Cartesian3.normalize(scratch.cameraOffset, scratch.cameraOffset);
 
-    // Look directly AT the plane — F-22 always centered in viewport
-    Cesium.Cartesian3.subtract(drone.position, scratch.cameraPosition, scratch.cameraOffset);
-    Cesium.Cartesian3.normalize(scratch.cameraOffset, scratch.cameraOffset);
+      // Up vector: perpendicular to direction, in the forward-up plane
+      scratch.upOffset.x = -sf * scratch.horizontalForward.x + cf * scratch.surfaceNormal.x;
+      scratch.upOffset.y = -sf * scratch.horizontalForward.y + cf * scratch.surfaceNormal.y;
+      scratch.upOffset.z = -sf * scratch.horizontalForward.z + cf * scratch.surfaceNormal.z;
+      Cesium.Cartesian3.normalize(scratch.upOffset, scratch.upOffset);
 
-    viewer.camera.setView({
-      destination: scratch.cameraPosition,
-      orientation: {
-        direction: scratch.cameraOffset,
-        up: scratch.surfaceNormal,
-      },
-    });
+      viewer.camera.setView({
+        destination: drone.position,
+        orientation: {
+          direction: scratch.cameraOffset,
+          up: scratch.upOffset,
+        },
+      });
+
+      // Update FPV telemetry
+      if (fpvHudAlt && fpvHudSpd) {
+        Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+        const agl = Math.max(0.0, scratch.cartographic.height - drone.lastGroundHeight);
+        const spd = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
+        fpvHudAlt.textContent = `ALT ${agl.toFixed(1)} m`;
+        fpvHudSpd.textContent = `SPD ${spd.toFixed(1)} m/s`;
+      }
+    } else {
+      // Chase camera: behind and above drone
+      Cesium.Cartesian3.multiplyByScalar(
+        scratch.horizontalForward,
+        FLIGHT.cameraForwardOffset,
+        scratch.cameraOffset,
+      );
+      Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, FLIGHT.cameraUpOffset, scratch.upOffset);
+      Cesium.Cartesian3.add(drone.position, scratch.cameraOffset, scratch.cameraPosition);
+      Cesium.Cartesian3.add(scratch.cameraPosition, scratch.upOffset, scratch.cameraPosition);
+
+      // Look above the drone so it sits in the lower part of the viewport
+      Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, FLIGHT.cameraLookAboveOffset, scratch.verticalStep);
+      Cesium.Cartesian3.add(drone.position, scratch.verticalStep, scratch.cameraOffset);
+      Cesium.Cartesian3.subtract(scratch.cameraOffset, scratch.cameraPosition, scratch.cameraOffset);
+      Cesium.Cartesian3.normalize(scratch.cameraOffset, scratch.cameraOffset);
+
+      viewer.camera.setView({
+        destination: scratch.cameraPosition,
+        orientation: {
+          direction: scratch.cameraOffset,
+          up: scratch.surfaceNormal,
+        },
+      });
+    }
   }
 
   function updateHudReadout() {
     Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
-    const speedMetersPerSecond = Cesium.Cartesian3.magnitude(drone.velocity);
+    const speedMetersPerSecond = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
     const agl = Math.max(0.0, scratch.cartographic.height - drone.lastGroundHeight);
     const headingDeg = Cesium.Math.toDegrees(Cesium.Math.zeroToTwoPi(drone.heading));
-    const pitchDeg = Cesium.Math.toDegrees(drone.pitch);
-    const rollDeg = Cesium.Math.toDegrees(drone.roll);
+    const pitchDeg = Cesium.Math.toDegrees(drone.visualPitch);
+    const rollDeg = Cesium.Math.toDegrees(drone.visualRoll);
 
     HUD.speed.textContent = `${(speedMetersPerSecond * 3.6).toFixed(1)} km/h`;
     HUD.altitudeAgl.textContent = `${agl.toFixed(1)} m`;
@@ -443,13 +504,13 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       location.latitude,
       location.height,
     );
-    drone.velocity = new Cesium.Cartesian3(0.0, 0.0, 0.0);
+    drone.horizontalVelocity = new Cesium.Cartesian3(0.0, 0.0, 0.0);
+    drone.verticalSpeed = 0.0;
     drone.heading = Cesium.Math.toRadians(200.0);
-    drone.pitch = Cesium.Math.toRadians(-2.0);
-    drone.roll = 0.0;
-    gearDeployed = true;
-    gearTransition = 1.0;
+    drone.visualPitch = 0.0;
+    drone.visualRoll = 0.0;
     updateDroneOrientation();
+    updateHorizontalAxes();
     updateWorldAxes();
     updateCamera();
   }
@@ -464,15 +525,15 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
         event.preventDefault();
         resetPosition();
       }
+      if (event.code === "KeyC") {
+        event.preventDefault();
+        toggleCameraMode();
+      }
       // Speed tier keys: 1 = 1x, 2 = 3x, 3 = 5x, 4 = 10x
       if (event.code === "Digit1") setSpeedTier(0);
       if (event.code === "Digit2") setSpeedTier(1);
       if (event.code === "Digit3") setSpeedTier(2);
       if (event.code === "Digit4") setSpeedTier(3);
-      // Landing gear toggle
-      if (event.code === "KeyG") {
-        gearDeployed = !gearDeployed;
-      }
     });
 
     document.addEventListener("keyup", (event) => {
@@ -575,7 +636,7 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     }
 
     viewer.resolutionScale = window.devicePixelRatio || 1.0;
-    viewer.camera.frustum.fov = Cesium.Math.toRadians(92.0);
+    viewer.camera.frustum.fov = Cesium.Math.toRadians(119.6);
   }
 
   async function loadWorldDetailLayers() {
@@ -687,6 +748,102 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     document.body.insertBefore(cloudFogOverlay, document.getElementById('hud'));
   }
 
+  function createFpvOverlay() {
+    fpvOverlay = document.createElement('div');
+    fpvOverlay.id = 'fpv-overlay';
+    fpvOverlay.style.cssText = `
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 5; display: none;
+    `;
+
+    // Vignette layer
+    const vignette = document.createElement('div');
+    vignette.style.cssText = `
+      position: absolute; inset: 0;
+      background: radial-gradient(
+        ellipse 70% 65% at 50% 50%,
+        transparent 0%,
+        transparent 45%,
+        rgba(0,0,0,0.18) 62%,
+        rgba(0,0,0,0.45) 78%,
+        rgba(0,0,0,0.82) 100%
+      );
+    `;
+    fpvOverlay.appendChild(vignette);
+
+    // Letterbox bars
+    const barStyle = `position: absolute; left: 0; right: 0; height: 3.5%; background: #000;`;
+    const topBar = document.createElement('div');
+    topBar.style.cssText = barStyle + 'top: 0;';
+    const bottomBar = document.createElement('div');
+    bottomBar.style.cssText = barStyle + 'bottom: 0;';
+    fpvOverlay.appendChild(topBar);
+    fpvOverlay.appendChild(bottomBar);
+
+    // Film grain (animated noise via CSS)
+    const grain = document.createElement('div');
+    grain.style.cssText = `
+      position: absolute; inset: 0; opacity: 0.06; mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size: 128px 128px;
+      animation: fpv-grain 0.08s steps(2) infinite;
+    `;
+    fpvOverlay.appendChild(grain);
+
+    // Slight color tint for cinematic warmth
+    const tint = document.createElement('div');
+    tint.style.cssText = `
+      position: absolute; inset: 0; opacity: 0.07;
+      background: linear-gradient(180deg, rgba(255,180,100,0.3) 0%, transparent 40%, rgba(80,120,200,0.2) 100%);
+      mix-blend-mode: overlay;
+    `;
+    fpvOverlay.appendChild(tint);
+
+    // FPV telemetry HUD
+    const hudContainer = document.createElement('div');
+    hudContainer.style.cssText = `
+      position: absolute; bottom: 6%; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 2.5rem; align-items: baseline;
+      font-family: 'Space Mono', monospace; font-size: 1.05rem;
+      color: rgba(255,255,255,0.88); text-shadow: 0 0 8px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,0.7);
+      letter-spacing: 0.04em;
+    `;
+
+    fpvHudAlt = document.createElement('span');
+    fpvHudAlt.textContent = 'ALT 0.0 m';
+    fpvHudSpd = document.createElement('span');
+    fpvHudSpd.textContent = 'SPD 0.0 m/s';
+
+    hudContainer.appendChild(fpvHudAlt);
+    hudContainer.appendChild(fpvHudSpd);
+    fpvOverlay.appendChild(hudContainer);
+
+    document.body.appendChild(fpvOverlay);
+
+    // Inject grain animation keyframes
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes fpv-grain {
+        0% { transform: translate(0,0); }
+        100% { transform: translate(-8px, -8px); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function toggleCameraMode() {
+    cameraMode = cameraMode === CAMERA_CHASE ? CAMERA_FPV : CAMERA_CHASE;
+    if (cameraMode === CAMERA_FPV) {
+      viewer.camera.frustum.fov = FPV_FOV;
+      if (fpvOverlay) fpvOverlay.style.display = 'block';
+      if (droneEntity) droneEntity.show = false;
+    } else {
+      viewer.camera.frustum.fov = CHASE_FOV;
+      if (fpvOverlay) fpvOverlay.style.display = 'none';
+      if (droneEntity) droneEntity.show = true;
+    }
+  }
+
   function updateCloudImmersion(dt) {
     if (!cloudFogOverlay || !viewer) return;
 
@@ -712,7 +869,7 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     // Overlay stays at z-index 0 (behind Cesium at z-index 1).
     // Below clouds: terrain renders on top of sky, clouds visible through transparent sky areas.
     // In/above clouds: Cesium terrain is hidden → Cesium canvas is transparent → overlay shows through.
-    // The F-22 is a Cesium entity so it always renders on the Cesium canvas (z-index 1), visible above overlay.
+    // The drone is a Cesium entity so it always renders on the Cesium canvas (z-index 1), visible above overlay.
 
     /* ─── Cesium terrain / tile visibility ─── */
     // Compute target fade: 0 = hidden, 1 = visible.
@@ -758,61 +915,19 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     }
   }
 
-  function updateControlSurfaces(dt) {
-    const smooth = 1.0 - Math.exp(-10.0 * dt);
-
-    // Ailerons: opposite deflection for roll
-    surfaceAngle.leftAileron += (-currentRollInput * SURFACE_LIMITS.aileron - surfaceAngle.leftAileron) * smooth;
-    surfaceAngle.rightAileron += (currentRollInput * SURFACE_LIMITS.aileron - surfaceAngle.rightAileron) * smooth;
-
-    // Inner flaps: follow ailerons with smaller deflection
-    surfaceAngle.leftFlap += (-currentRollInput * SURFACE_LIMITS.flap - surfaceAngle.leftFlap) * smooth;
-    surfaceAngle.rightFlap += (currentRollInput * SURFACE_LIMITS.flap - surfaceAngle.rightFlap) * smooth;
-
-    // Elevators: same direction for pitch
-    const elevTarget = currentPitchInput * SURFACE_LIMITS.elevator;
-    surfaceAngle.leftElevator += (elevTarget - surfaceAngle.leftElevator) * smooth;
-    surfaceAngle.rightElevator += (elevTarget - surfaceAngle.rightElevator) * smooth;
-
-    // Rudders: opposite for yaw
-    surfaceAngle.leftRudder += (currentYawInput * SURFACE_LIMITS.rudder - surfaceAngle.leftRudder) * smooth;
-    surfaceAngle.rightRudder += (-currentYawInput * SURFACE_LIMITS.rudder - surfaceAngle.rightRudder) * smooth;
-
-    // Build quaternions from axis-angle (X axis for flaps/elevators, Z for rudders)
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, surfaceAngle.leftAileron, surfaceQuat.leftAileron);
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, surfaceAngle.rightAileron, surfaceQuat.rightAileron);
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, surfaceAngle.leftFlap, surfaceQuat.leftFlap);
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, surfaceAngle.rightFlap, surfaceQuat.rightFlap);
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, surfaceAngle.leftElevator, surfaceQuat.leftElevator);
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, surfaceAngle.rightElevator, surfaceQuat.rightElevator);
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, surfaceAngle.leftRudder, surfaceQuat.leftRudder);
-    Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, surfaceAngle.rightRudder, surfaceQuat.rightRudder);
-
-    // Landing gear smooth retraction/deployment
-    const gearTarget = gearDeployed ? 1.0 : 0.0;
-    gearTransition += (gearTarget - gearTransition) * (1.0 - Math.exp(-3.0 * dt));
-    if (gearTransition < 0.01) gearTransition = 0;
-    if (gearTransition > 0.99) gearTransition = 1;
-    gearScale.x = gearTransition;
-    gearScale.y = gearTransition;
-    gearScale.z = gearTransition;
-  }
-
   function stepFrame(now) {
     const dt = Math.min(0.033, Math.max(0.001, (now - lastTime) / 1000.0));
     lastTime = now;
 
     applyOrientationInput(dt);
+    updateHorizontalAxes();
+    applyDroneMovement(dt);
+    enforceTerrainClearance();
+    updateHorizontalAxes();     // recompute at final position
     updateDroneOrientation();
     updateWorldAxes();
-    applyTranslationalInput(dt);
-    enforceTerrainClearance();
-    updateWorldAxes();          // re-derive axes at final position for camera
     updateCamera();
     updateHudReadout();
-
-    // Update control surface deflections and landing gear
-    updateControlSurfaces(dt);
 
     // Update cloud immersion effects (fog overlay + Cesium visibility)
     updateCloudImmersion(dt);
@@ -820,16 +935,16 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
     // Adaptive resolution scaling to maintain smooth FPS
     updateDynamicResolution(dt);
 
-    // Update F-22 entity orientation (heading correction: +π for GLTF +Z nose, +π/2 for 90° CW)
-    f22Hpr.heading = drone.heading + Math.PI * 1.5;
-    f22Hpr.pitch = drone.pitch;
-    f22Hpr.roll = drone.roll;
+    // Update drone entity orientation (heading correction for GLTF model orientation)
+    droneHpr.heading = drone.heading + Math.PI * 1.5;
+    droneHpr.pitch = drone.visualPitch;
+    droneHpr.roll = drone.visualRoll;
     Cesium.Transforms.headingPitchRollQuaternion(
       drone.position,
-      f22Hpr,
+      droneHpr,
       Cesium.Ellipsoid.WGS84,
       Cesium.Transforms.eastNorthUpToFixedFrame,
-      f22Orientation,
+      droneModelOrientation,
     );
 
     // Render the three-geospatial atmospheric overlay in sync with the Cesium camera.
@@ -843,58 +958,15 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       await buildViewer();
       await loadWorldDetailLayers();
 
-      // Add F-22 as a Cesium entity so it renders on the Cesium canvas (z-index 1),
+      // Add drone as a Cesium entity so it renders on the Cesium canvas (z-index 1),
       // always visible above the Three.js sky/cloud overlay (z-index 0).
-      f22Entity = viewer.entities.add({
+      droneEntity = viewer.entities.add({
         position: new Cesium.CallbackProperty(() => drone.position, false),
-        orientation: new Cesium.CallbackProperty(() => f22Orientation, false),
+        orientation: new Cesium.CallbackProperty(() => droneModelOrientation, false),
         model: {
-          uri: '/assets/f22.glb',
+          uri: '/assets/drone.glb',
           minimumPixelSize: 64,
           scale: 1.0,
-          nodeTransformations: {
-            // Hide ground plane and bottom reference
-            Ground: { scale: new Cesium.Cartesian3(0, 0, 0) },
-            bottom1: { scale: new Cesium.Cartesian3(0, 0, 0) },
-            // Ailerons (outer flaps)
-            'F22_model1:Left_Outer_Flap': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.leftAileron, false),
-            },
-            'F22_model1:Right_Outer_Flap': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.rightAileron, false),
-            },
-            // Inner flaps
-            'F22_model1:Left_Inner_Flap': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.leftFlap, false),
-            },
-            'F22_model1:Right_Inner_Flap': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.rightFlap, false),
-            },
-            // Elevators
-            'F22_model1:Left_Elevator': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.leftElevator, false),
-            },
-            'F22_model1:Right_Elevator': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.rightElevator, false),
-            },
-            // Rudders (V-tails)
-            'F22_model1:Left_Yaw': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.leftRudder, false),
-            },
-            'F22_model1:Right_Yaw': {
-              rotation: new Cesium.CallbackProperty(() => surfaceQuat.rightRudder, false),
-            },
-            // Landing gear (smooth retract/deploy)
-            'F22_model1:Front_Landing_Gear_Grp': {
-              scale: new Cesium.CallbackProperty(() => gearScale, false),
-            },
-            'F22_model1:Left_Landing_Gear_Grp': {
-              scale: new Cesium.CallbackProperty(() => gearScale, false),
-            },
-            'F22_model1:Right_Landing_Gear_Grp': {
-              scale: new Cesium.CallbackProperty(() => gearScale, false),
-            },
-          },
         },
       });
 
@@ -902,6 +974,7 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
 
       // Create the cloud fog overlay element
       createCloudFogOverlay();
+      createFpvOverlay();
 
       resetPosition();
       lastTime = performance.now();
@@ -916,7 +989,7 @@ import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState,
       requestAnimationFrame(frameLoop);
 
       setFlightStatus(
-        "Flight active. W thrust, S brake, arrows control pitch and turn.",
+        "Flight active. W/S ascend/descend, arrows move/yaw, A/D strafe.",
         false,
       );
 
