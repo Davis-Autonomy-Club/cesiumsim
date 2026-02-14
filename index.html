@@ -14,8 +14,6 @@
 <body>
   <div id="cesiumContainer"></div>
 
-  <div id="crosshair" aria-hidden="true"></div>
-
   <section id="hud">
     <div class="hud-title">FPV Drone</div>
     <div class="hud-grid">
@@ -39,8 +37,7 @@
   <section id="status-panel">
     <div class="panel-title">Simulation Status</div>
     <p id="dataset-status">Initializing high-fidelity world data...</p>
-    <p id="flight-status">Click Engage to start first-person control.</p>
-    <button id="engage-btn" type="button">Engage FPV Controls</button>
+    <p id="flight-status">Flight controls active.</p>
     <div id="speed-tier-bar">
       <span class="speed-tier-label">Speed</span>
       <button id="speed-btn-1" class="speed-btn active" type="button">1x</button>
@@ -48,20 +45,19 @@
       <button id="speed-btn-5" class="speed-btn" type="button">5x</button>
       <button id="speed-btn-10" class="speed-btn" type="button">10x</button>
     </div>
+    <div id="teleport-bar"
+      style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
+      <span class="speed-tier-label">Teleport</span>
+      <button id="teleport-ucd" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">UC Davis</button>
+    </div>
     <div class="controls">
       <div class="controls-title">Controls</div>
-      <p><code>W A S D</code> move | <code>Space</code> rise | <code>Shift</code> descend</p>
-      <p>Mouse look | <code>Q / E</code> roll | Arrows fine rotate</p>
-      <p><code>1 2 3 4</code> speed tier (1x / 3x / 5x / 10x)</p>
+      <p><code>W</code> thrust | <code>S</code> brake</p>
+      <p><code>↑ ↓</code> pitch up/down | <code>← →</code> turn &amp; roll</p>
+      <p><code>G</code> landing gear | <code>1 2 3 4</code> speed tier</p>
     </div>
   </section>
 
-  <section id="warning-panel">
-    <p>
-      Google Photorealistic 3D Tiles key is preconfigured. Optional override:
-      <code>?googleApiKey=YOUR_KEY</code>.
-    </p>
-  </section>
 </body>
 
 </html>

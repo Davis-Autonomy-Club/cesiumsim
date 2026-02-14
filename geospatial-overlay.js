@@ -219,7 +219,7 @@ export async function initGeospatialOverlay(viewer) {
     pointer-events: none;
     z-index: 0;
   `;
-    document.body.insertBefore(overlayCanvas, document.getElementById('crosshair'));
+    document.body.insertBefore(overlayCanvas, document.getElementById('hud'));
 
     const width = window.innerWidth;
     const height = window.innerHeight;
@@ -296,7 +296,6 @@ export async function initGeospatialOverlay(viewer) {
 
     /* ─── Volumetric Clouds ─── */
     cloudsEffect = new CloudsEffect(camera);
-    cloudsEffect.qualityPreset = 'medium';  // balance quality + performance
     cloudsEffect.coverage = 0.45;           // moderate cloud coverage
     cloudsEffect.skipRendering = false;     // CRITICAL: enable rendering
 
@@ -458,9 +457,9 @@ export function updateGeospatialOverlay(viewer) {
 
     /* Update light probes at the drone's location */
     const camPosWC = viewer.camera.positionWC;
-    const ecef = new Vector3(camPosWC.x, camPosWC.y, camPosWC.z);
-    skyLight.position.copy(ecef);
-    sunLight.target.position.copy(ecef);
+    _pos.set(camPosWC.x, camPosWC.y, camPosWC.z);
+    skyLight.position.copy(_pos);
+    sunLight.target.position.copy(_pos);
 
     sunLight.update();
     skyLight.update();
@@ -491,7 +490,7 @@ export function disposeGeospatialOverlay() {
 function syncCameraToCesium(viewer) {
     const cesiumCamera = viewer.camera;
 
-    /* Position (Cesium uses ECEF meters, same as Three.js world space) */
+    /* Position (ECEF meters) */
     _pos.set(
         cesiumCamera.positionWC.x,
         cesiumCamera.positionWC.y,
@@ -499,25 +498,26 @@ function syncCameraToCesium(viewer) {
     );
     camera.position.copy(_pos);
 
-    /* Direction & Up vectors */
+    /* View direction from Cesium (heading + pitch, no roll info needed) */
     _dir.set(
         cesiumCamera.directionWC.x,
         cesiumCamera.directionWC.y,
         cesiumCamera.directionWC.z,
     );
-    _up.set(
-        cesiumCamera.upWC.x,
-        cesiumCamera.upWC.y,
-        cesiumCamera.upWC.z,
-    );
-    _right.set(
-        cesiumCamera.rightWC.x,
-        cesiumCamera.rightWC.y,
-        cesiumCamera.rightWC.z,
-    );
 
-    /* Build rotation matrix from Cesium's right/up/direction basis */
-    _mat4.makeBasis(_right, _up, _dir.clone().negate());
+    /* World-up = geodetic surface normal ≈ normalize(position) in ECEF.
+       This is the TRUE up from the ground — completely independent of
+       the plane's roll, so the sky/horizon never tilts. */
+    _up.copy(_pos).normalize();
+
+    /* Build a roll-free camera basis:
+         right = normalize(direction × worldUp)
+         up    = right × direction
+         zAxis = −direction   (Three.js camera looks along local −Z)       */
+    _right.crossVectors(_dir, _up).normalize();
+    _up.crossVectors(_right, _dir);          // perpendicular to both, ≈ worldUp
+    _dir.negate();                            // zAxis = −direction
+    _mat4.makeBasis(_right, _up, _dir);
     camera.quaternion.setFromRotationMatrix(_mat4);
 
     /* Sync FOV – Cesium uses radians, Three.js degrees */

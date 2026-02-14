@@ -35,8 +35,7 @@ body {
 }
 
 #hud,
-#status-panel,
-#warning-panel {
+#status-panel {
   position: fixed;
   z-index: 10;
   backdrop-filter: blur(10px);
@@ -83,41 +82,15 @@ body {
   color: var(--accent);
 }
 
-#status-panel p,
-#warning-panel p {
+#status-panel p {
   margin: 0.45rem 0;
   font-size: 0.93rem;
   line-height: 1.25;
 }
 
-#status-panel code,
-#warning-panel code {
+#status-panel code {
   font-family: "Space Mono", monospace;
   color: #ffe8aa;
-}
-
-#engage-btn {
-  margin-top: 0.55rem;
-  margin-bottom: 0.5rem;
-  width: 100%;
-  border: 1px solid rgba(145, 230, 255, 0.92);
-  color: #021421;
-  background: linear-gradient(145deg, #8be8ff, #44d6ff);
-  padding: 0.58rem 0.9rem;
-  border-radius: 0;
-  cursor: pointer;
-  font-family: "Space Mono", monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 0.8rem;
-}
-
-#engage-btn:hover {
-  filter: brightness(1.08);
-}
-
-#engage-btn:active {
-  transform: translateY(1px);
 }
 
 /* ─── Speed tier bar ─── */
@@ -171,48 +144,6 @@ body {
   text-transform: uppercase;
 }
 
-#warning-panel {
-  bottom: 1rem;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(44rem, calc(100vw - 2rem));
-  padding: 0.65rem 1rem;
-  border-color: rgba(255, 214, 105, 0.35);
-}
-
-#crosshair {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  width: 22px;
-  height: 22px;
-  margin-left: -11px;
-  margin-top: -11px;
-  pointer-events: none;
-  z-index: 10;
-}
-
-#crosshair::before,
-#crosshair::after {
-  content: "";
-  position: absolute;
-  background: rgba(171, 230, 255, 0.86);
-}
-
-#crosshair::before {
-  left: 10px;
-  top: 0;
-  width: 2px;
-  height: 22px;
-}
-
-#crosshair::after {
-  left: 0;
-  top: 10px;
-  width: 22px;
-  height: 2px;
-}
-
 @media (max-width: 900px) {
   #hud {
     top: auto;
@@ -230,12 +161,4 @@ body {
     width: auto;
   }
 
-  #warning-panel {
-    left: 0.5rem;
-    right: 0.5rem;
-    width: auto;
-    transform: none;
-    bottom: 0.5rem;
-    padding: 0.45rem 0.7rem;
-  }
 }
