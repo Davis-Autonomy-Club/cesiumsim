@@ -14,6 +14,12 @@
 <body>
   <div id="cesiumContainer"></div>
 
+  <!-- Mini-map + coordinates -->
+  <div id="minimap-container">
+    <canvas id="minimap" width="220" height="220"></canvas>
+    <div id="minimap-coords">0.00000, 0.00000</div>
+  </div>
+
   <section id="hud">
     <div class="hud-title">FPV Drone</div>
     <div class="hud-grid">
@@ -23,16 +29,8 @@
       <div id="hud-altitude-agl">0.0 m</div>
       <div>Altitude (MSL)</div>
       <div id="hud-altitude-msl">0.0 m</div>
-      <div>Heading</div>
-      <div id="hud-heading">0.0 deg</div>
-      <div>Pitch / Roll</div>
-      <div id="hud-attitude">0.0 deg / 0.0 deg</div>
-      <div>Lat / Lon</div>
-      <div id="hud-position">0.00000, 0.00000</div>
       <div>Bldg Collision</div>
       <div id="hud-building-col">OFF</div>
-      <div>Speed Tier</div>
-      <div id="hud-speed-tier">1x</div>
     </div>
   </section>
 
@@ -40,18 +38,16 @@
     <div class="panel-title">Simulation Status</div>
     <p id="dataset-status">Initializing high-fidelity world data...</p>
     <p id="flight-status">Flight controls active.</p>
-    <div id="speed-tier-bar">
-      <span class="speed-tier-label">Speed</span>
-      <button id="speed-btn-1" class="speed-btn active" type="button">1x</button>
-      <button id="speed-btn-3" class="speed-btn" type="button">3x</button>
-      <button id="speed-btn-5" class="speed-btn" type="button">5x</button>
-      <button id="speed-btn-10" class="speed-btn" type="button">10x</button>
-      <button id="speed-btn-20" class="speed-btn" type="button">20x</button>
-    </div>
     <div id="teleport-bar"
       style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
       <span class="speed-tier-label">Teleport</span>
       <button id="teleport-ucd" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">UC Davis</button>
+      <button id="teleport-beu" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">BEU</button>
+    </div>
+    <div id="cloud-toggle-bar"
+      style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
+      <span class="speed-tier-label">Clouds</span>
+      <button id="cloud-toggle-btn" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">OFF</button>
     </div>
     <div class="controls">
       <div class="controls-title">Controls</div>
@@ -59,7 +55,6 @@
       <p><code>↑ ↓</code> forward / backward | <code>← →</code> yaw</p>
       <p><code>A</code> strafe left | <code>D</code> strafe right</p>
       <p><code>C</code> FPV camera | <code>G</code> creative mode</p>
-      <p><code>1 2 3 4 5</code> speed tier</p>
     </div>
   </section>
 

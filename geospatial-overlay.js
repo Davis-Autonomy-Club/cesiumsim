@@ -200,6 +200,16 @@ function loadSTBN(url) {
 /* ─── Public API ───────────────────────────────────────────────── */
 
 /**
+ * Toggle volumetric cloud rendering on or off.
+ * Sky, atmosphere, and stars remain unaffected.
+ */
+export function setCloudsEnabled(enabled) {
+    if (cloudsEffect) {
+        cloudsEffect.skipRendering = !enabled;
+    }
+}
+
+/**
  * Initialize the geospatial overlay on top of an existing Cesium viewer.
  * @param {Cesium.Viewer} viewer  The active Cesium Viewer instance.
  */

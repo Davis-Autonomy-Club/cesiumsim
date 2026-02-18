@@ -1,4 +1,4 @@
-import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM } from './geospatial-overlay.js';
+import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM, setCloudsEnabled } from './geospatial-overlay.js';
 import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreativeMode, updateCreativeMode, getFreeCamReadout, setHighlightVisible } from './creative-mode/creative-mode.js';
 
 (function main() {
@@ -17,6 +17,12 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     longitude: -121.7617,
     latitude: 38.5382,
     height: 200.0,
+  };
+
+  const BEU_LOCATION = {
+    longitude: -121.4190,
+    latitude: 36.1456,
+    height: 1785.0,  // Junipero Serra Peak — highest point in BEU (MSL)
   };
 
   const FLIGHT = {
@@ -52,12 +58,10 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     speed: document.getElementById("hud-speed"),
     altitudeAgl: document.getElementById("hud-altitude-agl"),
     altitudeMsl: document.getElementById("hud-altitude-msl"),
-    heading: document.getElementById("hud-heading"),
-    attitude: document.getElementById("hud-attitude"),
-    position: document.getElementById("hud-position"),
     buildingCol: document.getElementById("hud-building-col"),
     datasetStatus: document.getElementById("dataset-status"),
     flightStatus: document.getElementById("flight-status"),
+    minimapCoords: document.getElementById("minimap-coords"),
   };
 
   if (!window.Cesium) {
@@ -202,30 +206,20 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
   let googleTilesRef = null;      // reference to 3D tileset primitive
   let osmBuildingsRef = null;     // reference to OSM buildings primitive
 
-  /* ─── Speed multiplier ─── */
-  const SPEED_TIERS = [1, 3, 5, 10, 20];
-  let speedTierIndex = 0;
-  let speedMultiplier = SPEED_TIERS[0];
+  /* ─── Speed multiplier (fixed 50x) ─── */
+  const speedMultiplier = 50;
 
-  function setSpeedTier(index) {
-    speedTierIndex = Math.max(0, Math.min(index, SPEED_TIERS.length - 1));
-    speedMultiplier = SPEED_TIERS[speedTierIndex];
-    updateSpeedTierHUD();
-  }
+  /* ─── Cloud toggle ─── */
+  let cloudsOn = false;
 
-  function updateSpeedTierHUD() {
-    const el = document.getElementById("hud-speed-tier");
-    if (el) {
-      el.textContent = `${speedMultiplier}x`;
-    }
-    // Update button states
-    SPEED_TIERS.forEach((tier, i) => {
-      const btn = document.getElementById(`speed-btn-${tier}`);
-      if (btn) {
-        btn.classList.toggle("active", i === speedTierIndex);
-      }
-    });
-  }
+  /* ─── Mini-map state ─── */
+  let minimapCanvas = null;
+  let minimapCtx = null;
+  let minimapPerimCoords = null;  // [{lon, lat}, ...] from GeoJSON
+  const MINIMAP_PERIM_BOUNDS = {
+    minLon: -121.979, maxLon: -120.214,
+    minLat: 35.789, maxLat: 36.989,
+  };
 
   function setFlightStatus(text, isWarning) {
     HUD.flightStatus.textContent = text;
@@ -617,9 +611,9 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       HUD.speed.textContent = `${(r.speedMs * 3.6).toFixed(1)} km/h`;
       HUD.altitudeAgl.textContent = `${r.agl.toFixed(1)} m`;
       HUD.altitudeMsl.textContent = `${r.altMsl.toFixed(1)} m`;
-      HUD.heading.textContent = `${r.headingDeg.toFixed(1)} deg`;
-      HUD.attitude.textContent = `0.0 deg / 0.0 deg`;
-      HUD.position.textContent = `${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}`;
+      if (HUD.minimapCoords) {
+        HUD.minimapCoords.textContent = `${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}`;
+      }
       if (HUD.buildingCol) {
         HUD.buildingCol.textContent = 'OFF';
         HUD.buildingCol.style.color = '';
@@ -630,18 +624,15 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
     const speedMetersPerSecond = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
     const agl = Math.max(0.0, scratch.cartographic.height - drone.lastGroundHeight);
-    const headingDeg = Cesium.Math.toDegrees(Cesium.Math.zeroToTwoPi(drone.heading));
-    const pitchDeg = Cesium.Math.toDegrees(drone.visualPitch);
-    const rollDeg = Cesium.Math.toDegrees(drone.visualRoll);
 
     HUD.speed.textContent = `${(speedMetersPerSecond * 3.6).toFixed(1)} km/h`;
     HUD.altitudeAgl.textContent = `${agl.toFixed(1)} m`;
     HUD.altitudeMsl.textContent = `${scratch.cartographic.height.toFixed(1)} m`;
-    HUD.heading.textContent = `${headingDeg.toFixed(1)} deg`;
-    HUD.attitude.textContent = `${pitchDeg.toFixed(1)} deg / ${rollDeg.toFixed(1)} deg`;
-    HUD.position.textContent =
-      `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
-      `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
+    if (HUD.minimapCoords) {
+      HUD.minimapCoords.textContent =
+        `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
+        `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
+    }
 
     // Building collision HUD
     if (HUD.buildingCol) {
@@ -716,26 +707,11 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
           setFlightStatus("Creative Mode active. G to return to drone.", false);
         }
       }
-      // Speed tier keys: 1 = 1x, 2 = 3x, 3 = 5x, 4 = 10x
-      if (event.code === "Digit1") setSpeedTier(0);
-      if (event.code === "Digit2") setSpeedTier(1);
-      if (event.code === "Digit3") setSpeedTier(2);
-      if (event.code === "Digit4") setSpeedTier(3);
-      if (event.code === "Digit5") setSpeedTier(4);
     });
 
     document.addEventListener("keyup", (event) => {
       keyState.delete(event.code);
     });
-
-    // Speed tier button clicks
-    SPEED_TIERS.forEach((tier, i) => {
-      const btn = document.getElementById(`speed-btn-${tier}`);
-      if (btn) {
-        btn.addEventListener("click", () => setSpeedTier(i));
-      }
-    });
-    updateSpeedTierHUD();
 
     const ucdBtn = document.getElementById("teleport-ucd");
     if (ucdBtn) {
@@ -744,6 +720,27 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
         teleportTo(UCD_LOCATION);
         setFlightStatus("Flight active. W/S ascend/descend, arrows move/yaw, A/D strafe.", false);
         ucdBtn.blur();
+      });
+    }
+
+    const beuBtn = document.getElementById("teleport-beu");
+    if (beuBtn) {
+      beuBtn.addEventListener("click", () => {
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
+        teleportTo(BEU_LOCATION);
+        setFlightStatus("Teleported to BEU (San Benito-Monterey) fire perimeter region.", false);
+        beuBtn.blur();
+      });
+    }
+
+    const cloudBtn = document.getElementById("cloud-toggle-btn");
+    if (cloudBtn) {
+      cloudBtn.addEventListener("click", () => {
+        cloudsOn = !cloudsOn;
+        setCloudsEnabled(cloudsOn);
+        cloudBtn.textContent = cloudsOn ? "ON" : "OFF";
+        cloudBtn.classList.toggle("active", cloudsOn);
+        cloudBtn.blur();
       });
     }
   }
@@ -1038,6 +1035,19 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
   function updateCloudImmersion(dt) {
     if (!cloudFogOverlay || !viewer) return;
 
+    // When clouds are toggled off, force everything clear and bail
+    if (!cloudsOn) {
+      cloudFogOverlay.style.opacity = '0';
+      currentCloudImmersion = 0;
+      currentCesiumFade = 1;
+      if (viewer.scene.globe) viewer.scene.globe.show = true;
+      if (googleTilesRef) googleTilesRef.show = true;
+      if (osmBuildingsRef) osmBuildingsRef.show = true;
+      viewer.scene.fog.enabled = true;
+      viewer.scene.fog.density = 0.0003;
+      return;
+    }
+
     // Get current altitude MSL from the drone's cartographic position
     Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
     const altitudeMSL = scratch.cartographic.height;
@@ -1128,6 +1138,9 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     // Update cloud immersion effects (fog overlay + Cesium visibility)
     updateCloudImmersion(dt);
 
+    // Update gyroscopic mini-map
+    updateMinimap();
+
     // Adaptive resolution scaling to maintain smooth FPS
     updateDynamicResolution(dt);
 
@@ -1146,6 +1159,170 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     // Render the three-geospatial atmospheric overlay in sync with the Cesium camera.
     // Wrapped in try-catch so overlay errors never break the flight loop.
     try { updateGeospatialOverlay(viewer); } catch (_) { }
+  }
+
+  /* ─── Gyroscopic Mini-map ─── */
+  function updateMinimap() {
+    if (!minimapCtx || !viewer) return;
+
+    const w = minimapCanvas.width;
+    const h = minimapCanvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    // Get drone lat/lon
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+    const droneLon = Cesium.Math.toDegrees(scratch.cartographic.longitude);
+    const droneLat = Cesium.Math.toDegrees(scratch.cartographic.latitude);
+    const headingRad = drone.heading;
+
+    // Zoom: show ~50% of the perimeter extent (half of the lon/lat range)
+    const bounds = MINIMAP_PERIM_BOUNDS;
+    const lonSpan = bounds.maxLon - bounds.minLon;
+    const latSpan = bounds.maxLat - bounds.minLat;
+    const halfSpan = Math.max(lonSpan, latSpan) * 0.5;
+    const scale = (w * 0.45) / halfSpan;  // degrees → pixels
+
+    // Clear
+    minimapCtx.clearRect(0, 0, w, h);
+
+    // Draw in rotated coordinate system (heading-up)
+    minimapCtx.save();
+    minimapCtx.translate(cx, cy);
+    minimapCtx.rotate(-headingRad);  // rotate map so heading faces up
+
+    // Helper: geo (lon/lat) → local pixel offset relative to drone
+    const geoToLocal = (lon, lat) => {
+      const dx = (lon - droneLon) * scale;
+      const dy = -(lat - droneLat) * scale;  // y inverted
+      return [dx, dy];
+    };
+
+    // Draw perimeter polygon
+    if (minimapPerimCoords && minimapPerimCoords.length > 2) {
+      minimapCtx.beginPath();
+      const [fx, fy] = geoToLocal(minimapPerimCoords[0].lon, minimapPerimCoords[0].lat);
+      minimapCtx.moveTo(fx, fy);
+      // Subsample for performance (71k points is too many for canvas)
+      const step = Math.max(1, Math.floor(minimapPerimCoords.length / 800));
+      for (let i = step; i < minimapPerimCoords.length; i += step) {
+        const [px, py] = geoToLocal(minimapPerimCoords[i].lon, minimapPerimCoords[i].lat);
+        minimapCtx.lineTo(px, py);
+      }
+      minimapCtx.closePath();
+      minimapCtx.fillStyle = 'rgba(255, 60, 60, 0.15)';
+      minimapCtx.fill();
+      minimapCtx.strokeStyle = 'rgba(255, 80, 80, 0.7)';
+      minimapCtx.lineWidth = 1.5;
+      minimapCtx.stroke();
+    }
+
+    minimapCtx.restore();
+
+    // Draw drone indicator (always at center, pointing up)
+    minimapCtx.save();
+    minimapCtx.translate(cx, cy);
+    // Arrow pointing up
+    minimapCtx.beginPath();
+    minimapCtx.moveTo(0, -8);
+    minimapCtx.lineTo(-5, 6);
+    minimapCtx.lineTo(0, 3);
+    minimapCtx.lineTo(5, 6);
+    minimapCtx.closePath();
+    minimapCtx.fillStyle = '#82e3ff';
+    minimapCtx.fill();
+    minimapCtx.strokeStyle = '#fff';
+    minimapCtx.lineWidth = 1;
+    minimapCtx.stroke();
+    minimapCtx.restore();
+
+    // Draw dynamic cardinal directions (rotate with heading)
+    minimapCtx.save();
+    minimapCtx.translate(cx, cy);
+    minimapCtx.rotate(-headingRad);
+    minimapCtx.font = 'bold 11px "Space Mono", monospace';
+    minimapCtx.textAlign = 'center';
+    minimapCtx.textBaseline = 'middle';
+    const cardR = w * 0.44;
+    // N (red), S, E, W (muted)
+    minimapCtx.fillStyle = '#ff6666';
+    minimapCtx.fillText('N', 0, -cardR);
+    minimapCtx.fillStyle = 'rgba(159, 190, 226, 0.7)';
+    minimapCtx.fillText('S', 0, cardR);
+    minimapCtx.fillText('E', cardR, 0);
+    minimapCtx.fillText('W', -cardR, 0);
+    minimapCtx.restore();
+  }
+
+  /* ─── Fire Perimeter Overlay (GeoJSON) ─── */
+  async function loadFirePerimeters() {
+    try {
+      const response = await fetch('/assets/firePerimeters.geojson');
+      const geojson = await response.json();
+
+      // Filter client-side: only the San Benito-Monterey (BEU) unit
+      const beuFeature = geojson.features.find(f => f.properties.UNITCODE === 'BEU');
+      if (!beuFeature) {
+        console.warn('[firePerimeters] BEU feature not found in GeoJSON');
+        return;
+      }
+
+      console.log('[firePerimeters] Loaded BEU region:', beuFeature.properties.UNIT);
+
+      // Build coordinate array from the polygon's outer ring
+      const ring = beuFeature.geometry.coordinates[0];
+      const degreesFlat = [];
+      minimapPerimCoords = [];
+      for (const [lon, lat] of ring) {
+        degreesFlat.push(lon, lat);
+        minimapPerimCoords.push({ lon, lat });
+      }
+
+      // Flat ground-clamped polygon — no extrusion so it cannot interfere
+      // with sampleHeight() or pickFromRay() at any altitude.
+      const perimGeometry = new Cesium.GeometryInstance({
+        geometry: new Cesium.PolygonGeometry({
+          polygonHierarchy: new Cesium.PolygonHierarchy(
+            Cesium.Cartesian3.fromDegreesArray(degreesFlat),
+          ),
+          vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+        }),
+        attributes: {
+          color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+            Cesium.Color.RED.withAlpha(0.25),
+          ),
+        },
+      });
+
+      viewer.scene.primitives.add(new Cesium.GroundPrimitive({
+        geometryInstances: perimGeometry,
+        allowPicking: false,
+      }));
+
+      // Add a floating label at the center of the region
+      const centerLon = -121.0965;
+      const centerLat = 36.3890;
+      viewer.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 500),
+        label: {
+          text: 'BEU — San Benito-Monterey Fire Perimeter',
+          font: 'bold 18px sans-serif',
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance: new Cesium.NearFarScalar(1000, 1.4, 200000, 0.3),
+        },
+        show: true,
+      });
+
+      console.log('[firePerimeters] BEU perimeter overlay rendered.');
+    } catch (err) {
+      console.error('[firePerimeters] Failed to load fire perimeters:', err);
+    }
   }
 
   async function init() {
@@ -1173,6 +1350,15 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       createFpvOverlay();
       initCreativeMode(viewer);
 
+      // Load the fire perimeter overlay (non-blocking)
+      loadFirePerimeters();
+
+      // Initialize mini-map canvas
+      minimapCanvas = document.getElementById('minimap');
+      if (minimapCanvas) {
+        minimapCtx = minimapCanvas.getContext('2d');
+      }
+
       resetPosition();
       lastTime = performance.now();
 
@@ -1193,7 +1379,10 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       // Initialize the three-geospatial atmospheric overlay asynchronously.
       // This precomputes atmosphere textures and streams cloud data — it can
       // take several seconds but must never block the flight loop.
-      initGeospatialOverlay(viewer).catch((err) => {
+      initGeospatialOverlay(viewer).then(() => {
+        // Clouds default to off
+        setCloudsEnabled(false);
+      }).catch((err) => {
         console.error('[init] Atmospheric overlay failed to initialize:', err);
       });
     } catch (error) {
