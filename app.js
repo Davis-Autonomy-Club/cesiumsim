@@ -37,17 +37,6 @@ import { GoogleGenAI } from '@google/genai';
     cameraLookAboveOffset: 6.0,
   };
 
-  /* ─── Building collision configuration ─── */
-  const BUILDING_COLLISION = {
-    enabled: true,
-    activationAltitudeAGL: 500,   // only check below this AGL altitude (meters)
-    minimumClearance: 6.0,         // min distance above building rooftops (meters)
-    forwardCheckDistance: 80,      // forward ray check distance (meters)
-    wallStopDistance: 5,          // full stop when wall is this close (meters)
-    deflectionStrength: 1,      // velocity kill factor at closest range (0-1)
-    pushbackDistance: 3.0,         // meters to push back from wall on hard collision
-  };
-
   const HUD = {
     speed: document.getElementById("hud-speed"),
     altitudeAgl: document.getElementById("hud-altitude-agl"),
@@ -55,7 +44,6 @@ import { GoogleGenAI } from '@google/genai';
     heading: document.getElementById("hud-heading"),
     attitude: document.getElementById("hud-attitude"),
     position: document.getElementById("hud-position"),
-    buildingCol: document.getElementById("hud-building-col"),
     datasetStatus: document.getElementById("dataset-status"),
     flightStatus: document.getElementById("flight-status"),
   };
@@ -142,9 +130,6 @@ import { GoogleGenAI } from '@google/genai';
     upOffset: new Cesium.Cartesian3(),
     cartographic: new Cesium.Cartographic(),
     surfaceNormal: new Cesium.Cartesian3(),
-    // Building collision scratch
-    buildingRayDirection: new Cesium.Cartesian3(),
-    buildingCartographic: new Cesium.Cartographic(),
   };
 
   const keyState = new Set();
@@ -197,10 +182,6 @@ import { GoogleGenAI } from '@google/genai';
       DRS.frameCount = 0;
     }
   }
-
-  /* ─── Building collision state ─── */
-  let buildingCollisionActive = false;   // true when below activation altitude
-  let lastBuildingHitDistance = Infinity; // distance to nearest forward obstacle
 
   /* ─── Cloud immersion state ─── */
   let cloudFogOverlay = null;
@@ -444,118 +425,6 @@ import { GoogleGenAI } from '@google/genai';
     }
   }
 
-  /* ─── Building collision (rooftop + wall) ───
-   * Uses scene.sampleHeight() for height-based collision (terrain + 3D tiles)
-   * and scene.pickFromRay() for forward wall detection.
-   * Only active below BUILDING_COLLISION.activationAltitudeAGL to keep cost low.
-   */
-  function enforceBuildingCollision() {
-    if (!BUILDING_COLLISION.enabled || !viewer || !viewer.scene) return;
-
-    buildingCollisionActive = false;
-    lastBuildingHitDistance = Infinity;
-
-    // Need sampleHeight support (requires WebGL depth texture)
-    const scene = viewer.scene;
-    const hasSampleHeight = scene.sampleHeightSupported;
-    const hasPickFromRay = typeof scene.pickFromRay === 'function';
-
-    if (!hasSampleHeight && !hasPickFromRay) return;
-
-    // Compute current AGL to decide activation
-    Cesium.Cartographic.fromCartesian(
-      drone.position, Cesium.Ellipsoid.WGS84, scratch.buildingCartographic,
-    );
-    const agl = scratch.buildingCartographic.height - drone.lastGroundHeight;
-    if (agl > BUILDING_COLLISION.activationAltitudeAGL) return;
-
-    buildingCollisionActive = true;
-
-    // Build exclusion list (exclude the F-22 so we don't self-collide)
-    const excludeList = droneEntity ? [droneEntity] : [];
-
-    /* ── 1. Height-based collision (rooftop) ──
-     * scene.sampleHeight returns the height of the tallest scene geometry
-     * (terrain + 3D tiles) at the given lat/lon. If the drone is below that
-     * height, it gets pushed up — prevents flying through rooftops. */
-    if (hasSampleHeight) {
-      const sceneHeight = scene.sampleHeight(scratch.buildingCartographic, excludeList);
-      if (Number.isFinite(sceneHeight)) {
-        const minHeight = sceneHeight + BUILDING_COLLISION.minimumClearance;
-        if (scratch.buildingCartographic.height < minHeight) {
-          // Snap drone above the building
-          scratch.buildingCartographic.height = minHeight;
-          Cesium.Cartesian3.fromRadians(
-            scratch.buildingCartographic.longitude,
-            scratch.buildingCartographic.latitude,
-            scratch.buildingCartographic.height,
-            Cesium.Ellipsoid.WGS84,
-            drone.position,
-          );
-
-          // Kill downward vertical speed
-          if (drone.verticalSpeed < 0.0) {
-            drone.verticalSpeed = 0.0;
-          }
-
-          // Strip any downward component from horizontal velocity
-          Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
-          const hVertComponent = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
-          if (hVertComponent < 0.0) {
-            Cesium.Cartesian3.multiplyByScalar(
-              scratch.surfaceNormal, hVertComponent, scratch.velocityStep,
-            );
-            Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
-          }
-        }
-      }
-    }
-
-    /* ── 2. Forward wall collision ──
-     * Cast a ray in the drone's forward direction. If it hits scene geometry
-     * within forwardCheckDistance, progressively brake; if within wallStopDistance,
-     * fully stop and push the drone back. */
-    if (hasPickFromRay) {
-      const speed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
-      if (speed > 1.0) {
-        // Forward ray
-        const forwardRay = new Cesium.Ray(drone.position, scratch.forward);
-        const forwardHit = scene.pickFromRay(forwardRay, excludeList);
-
-        if (forwardHit && forwardHit.position) {
-          const distance = Cesium.Cartesian3.distance(drone.position, forwardHit.position);
-          lastBuildingHitDistance = distance;
-
-          if (distance < BUILDING_COLLISION.forwardCheckDistance) {
-            // Progressive braking: closer → stronger
-            const t = 1.0 - (distance / BUILDING_COLLISION.forwardCheckDistance);
-            const deflection = t * t * BUILDING_COLLISION.deflectionStrength; // quadratic ramp
-            Cesium.Cartesian3.multiplyByScalar(
-              drone.horizontalVelocity, 1.0 - deflection, drone.horizontalVelocity,
-            );
-
-            // Hard stop + pushback when very close to a wall
-            if (distance < BUILDING_COLLISION.wallStopDistance) {
-              // Push drone backward away from the wall
-              Cesium.Cartesian3.multiplyByScalar(
-                scratch.forward,
-                -BUILDING_COLLISION.pushbackDistance,
-                scratch.velocityStep,
-              );
-              Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
-
-              // Kill all velocity
-              drone.horizontalVelocity.x = 0.0;
-              drone.horizontalVelocity.y = 0.0;
-              drone.horizontalVelocity.z = 0.0;
-              drone.verticalSpeed = 0.0;
-            }
-          }
-        }
-      }
-    }
-  }
-
   function updateCamera() {
     Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
 
@@ -634,26 +503,6 @@ import { GoogleGenAI } from '@google/genai';
     HUD.position.textContent =
       `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
       `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
-
-    // Building collision HUD
-    if (HUD.buildingCol) {
-      if (!BUILDING_COLLISION.enabled) {
-        HUD.buildingCol.textContent = 'OFF';
-        HUD.buildingCol.style.color = '';
-      } else if (!buildingCollisionActive) {
-        HUD.buildingCol.textContent = 'STANDBY';
-        HUD.buildingCol.style.color = '#888';
-      } else if (lastBuildingHitDistance < BUILDING_COLLISION.wallStopDistance) {
-        HUD.buildingCol.textContent = `WALL ${lastBuildingHitDistance.toFixed(0)}m`;
-        HUD.buildingCol.style.color = '#ff4444';
-      } else if (lastBuildingHitDistance < BUILDING_COLLISION.forwardCheckDistance) {
-        HUD.buildingCol.textContent = `WARN ${lastBuildingHitDistance.toFixed(0)}m`;
-        HUD.buildingCol.style.color = '#ffaa00';
-      } else {
-        HUD.buildingCol.textContent = 'ACTIVE';
-        HUD.buildingCol.style.color = '#44ff44';
-      }
-    }
   }
 
   function resetPosition() {
@@ -1302,7 +1151,6 @@ Rules:
     updateHorizontalAxes();     // recompute at final position
     updateDroneOrientation();
     updateWorldAxes();
-    enforceBuildingCollision();
     updateCamera();
     updateHudReadout();
 
