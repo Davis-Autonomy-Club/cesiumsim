@@ -36,6 +36,16 @@ export const FLIGHT = {
   cameraLookAboveOffset: 6.0,
 };
 
+export const BUILDING_COLLISION = {
+  enabled: true,
+  activationAltitudeAGL: 500,
+  minimumClearance: 6.0,
+  forwardCheckDistance: 80,
+  wallStopDistance: 5,
+  deflectionStrength: 1,
+  pushbackDistance: 3.0,
+};
+
 export const CHASE_FOV = Cesium.Math.toRadians(119.6);
 export const FPV_FOV = Cesium.Math.toRadians(140.0);
 export const FPV_PITCH_DOWN = Cesium.Math.toRadians(-45.0);

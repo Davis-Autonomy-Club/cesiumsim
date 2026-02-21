@@ -4,6 +4,7 @@ import {
   updateGeospatialOverlay,
 } from "../overlay/geospatial-overlay";
 import {
+  BUILDING_COLLISION,
   CAMERA_CHASE,
   CAMERA_FPV,
   CHASE_FOV,
@@ -94,6 +95,7 @@ export function startSimulator(): void {
     cameraPosition: new Cesium.Cartesian3(),
     upOffset: new Cesium.Cartesian3(),
     cartographic: new Cesium.Cartographic(),
+    buildingCartographic: new Cesium.Cartographic(),
     surfaceNormal: new Cesium.Cartesian3(),
   };
 
@@ -361,6 +363,123 @@ export function startSimulator(): void {
       if (hVertComponent < 0.0) {
         Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, hVertComponent, scratch.velocityStep);
         Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+      }
+    }
+  }
+
+  function enforceBuildingCollision(): void {
+    if (!BUILDING_COLLISION.enabled || !viewer || !viewer.scene) {
+      return;
+    }
+
+    const scene = viewer.scene;
+    const hasSampleHeight = scene.sampleHeightSupported;
+    const hasPickFromRay = typeof scene.pickFromRay === "function";
+    if (!hasSampleHeight && !hasPickFromRay) {
+      return;
+    }
+
+    Cesium.Cartographic.fromCartesian(
+      drone.position,
+      Cesium.Ellipsoid.WGS84,
+      scratch.buildingCartographic,
+    );
+    const agl = scratch.buildingCartographic.height - drone.lastGroundHeight;
+    if (agl > BUILDING_COLLISION.activationAltitudeAGL) {
+      return;
+    }
+
+    const excludeList = droneEntity ? [droneEntity] : [];
+
+    if (hasSampleHeight) {
+      const sceneHeight = scene.sampleHeight(
+        scratch.buildingCartographic,
+        excludeList,
+      );
+      if (Number.isFinite(sceneHeight)) {
+        const minHeight = sceneHeight + BUILDING_COLLISION.minimumClearance;
+        if (scratch.buildingCartographic.height < minHeight) {
+          scratch.buildingCartographic.height = minHeight;
+          Cesium.Cartesian3.fromRadians(
+            scratch.buildingCartographic.longitude,
+            scratch.buildingCartographic.latitude,
+            scratch.buildingCartographic.height,
+            Cesium.Ellipsoid.WGS84,
+            drone.position,
+          );
+
+          if (drone.verticalSpeed < 0.0) {
+            drone.verticalSpeed = 0.0;
+          }
+
+          Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(
+            drone.position,
+            scratch.surfaceNormal,
+          );
+          const hVertComponent = Cesium.Cartesian3.dot(
+            drone.horizontalVelocity,
+            scratch.surfaceNormal,
+          );
+          if (hVertComponent < 0.0) {
+            Cesium.Cartesian3.multiplyByScalar(
+              scratch.surfaceNormal,
+              hVertComponent,
+              scratch.velocityStep,
+            );
+            Cesium.Cartesian3.subtract(
+              drone.horizontalVelocity,
+              scratch.velocityStep,
+              drone.horizontalVelocity,
+            );
+          }
+        }
+      }
+    }
+
+    if (hasPickFromRay) {
+      const speed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
+      if (speed <= 1.0) {
+        return;
+      }
+
+      const forwardRay = new Cesium.Ray(drone.position, scratch.forward);
+      const forwardHit = scene.pickFromRay(forwardRay, excludeList);
+      if (!forwardHit || !forwardHit.position) {
+        return;
+      }
+
+      const distance = Cesium.Cartesian3.distance(
+        drone.position,
+        forwardHit.position,
+      );
+      if (distance >= BUILDING_COLLISION.forwardCheckDistance) {
+        return;
+      }
+
+      const t = 1.0 - distance / BUILDING_COLLISION.forwardCheckDistance;
+      const deflection = t * t * BUILDING_COLLISION.deflectionStrength;
+      Cesium.Cartesian3.multiplyByScalar(
+        drone.horizontalVelocity,
+        1.0 - deflection,
+        drone.horizontalVelocity,
+      );
+
+      if (distance < BUILDING_COLLISION.wallStopDistance) {
+        Cesium.Cartesian3.multiplyByScalar(
+          scratch.forward,
+          -BUILDING_COLLISION.pushbackDistance,
+          scratch.velocityStep,
+        );
+        Cesium.Cartesian3.add(
+          drone.position,
+          scratch.velocityStep,
+          drone.position,
+        );
+
+        drone.horizontalVelocity.x = 0.0;
+        drone.horizontalVelocity.y = 0.0;
+        drone.horizontalVelocity.z = 0.0;
+        drone.verticalSpeed = 0.0;
       }
     }
   }
@@ -786,6 +905,7 @@ export function startSimulator(): void {
     updateHorizontalAxes();     // recompute at final position
     updateDroneOrientation();
     updateWorldAxes();
+    enforceBuildingCollision();
     updateCamera();
     updateHudReadout();
 
