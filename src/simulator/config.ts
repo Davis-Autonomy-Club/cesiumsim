@@ -1,10 +1,9 @@
-export const DEFAULT_CESIUM_TOKEN =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmFjOWQwNy1lYTA5LTRmZWUtODNkOS1jYTAyNWM0OGVkMmMiLCJpZCI6Mzc3Mzg3LCJpYXQiOjE3NjgxNzAyNDN9.rAi0BHXk9BUPEfYxockPHQxu9qvCJ8ifJS0duz7HUl0";
+export const DEFAULT_CESIUM_TOKEN = import.meta.env.VITE_CESIUM_TOKEN ?? "";
 
 export const DEFAULT_GOOGLE_MAPS_API_KEY =
-  "AIzaSyDZoPrWVs0BJHxIYSA0-ijn15jN9P1y2M4";
+  import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
 
-export const GEMINI_API_KEY = "AIzaSyDQdSe1QCJwz7PyyuvMxsHNOOHaVQb4Ako";
+export const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY ?? "";
 
 export const START_LOCATION = {
   longitude: -122.3933,
