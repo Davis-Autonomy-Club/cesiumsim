@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Widgets/widgets.css" />
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Cesium.js"></script>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </head>
 
 <body>
@@ -29,12 +29,15 @@
       <div id="hud-attitude">0.0 deg / 0.0 deg</div>
       <div>Lat / Lon</div>
       <div id="hud-position">0.00000, 0.00000</div>
-      <div>Bldg Collision</div>
-      <div id="hud-building-col">OFF</div>
       <div>Speed Tier</div>
       <div id="hud-speed-tier">1x</div>
     </div>
   </section>
+
+  <div id="gemini-overlay">
+    <div id="gemini-header">Gemini Autopilot</div>
+    <div id="gemini-text">Waiting for response...</div>
+  </div>
 
   <section id="status-panel">
     <div class="panel-title">Simulation Status</div>
@@ -46,7 +49,6 @@
       <button id="speed-btn-3" class="speed-btn" type="button">3x</button>
       <button id="speed-btn-5" class="speed-btn" type="button">5x</button>
       <button id="speed-btn-10" class="speed-btn" type="button">10x</button>
-      <button id="speed-btn-20" class="speed-btn" type="button">20x</button>
     </div>
     <div id="teleport-bar"
       style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
@@ -58,8 +60,8 @@
       <p><code>W</code> ascend | <code>S</code> descend</p>
       <p><code>↑ ↓</code> forward / backward | <code>← →</code> yaw</p>
       <p><code>A</code> strafe left | <code>D</code> strafe right</p>
-      <p><code>C</code> FPV camera | <code>G</code> creative mode</p>
-      <p><code>1 2 3 4 5</code> speed tier</p>
+      <p><code>C</code> toggle FPV camera | <code>V</code> Gemini vision</p>
+      <p><code>1 2 3 4</code> speed tier</p>
     </div>
   </section>
 
