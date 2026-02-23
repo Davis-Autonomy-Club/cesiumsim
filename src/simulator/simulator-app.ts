@@ -1,92 +1,40 @@
-import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM } from './geospatial-overlay.js';
-import { GoogleGenAI } from '@google/genai';
+import {
+  getCloudImmersionState,
+  initGeospatialOverlay,
+  updateGeospatialOverlay,
+} from "../overlay/geospatial-overlay";
+import {
+  BUILDING_COLLISION,
+  CAMERA_CHASE,
+  CAMERA_FPV,
+  CHASE_FOV,
+  DEFAULT_CESIUM_TOKEN,
+  DEFAULT_GOOGLE_MAPS_API_KEY,
+  FLIGHT,
+  FPV_FOV,
+  FPV_PITCH_DOWN,
+  KEY_BLOCKLIST,
+  SPEED_TIERS,
+  START_LOCATION,
+  UCD_LOCATION,
+} from "./config";
+import { GeminiController } from "./gemini-controller";
+import {
+  createCloudFogOverlay,
+  createFpvOverlay,
+  getHudElements,
+  setFlightStatus,
+  updateSpeedTierHud,
+} from "./hud";
 
-(function main() {
-  const DEFAULT_CESIUM_TOKEN =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmFjOWQwNy1lYTA5LTRmZWUtODNkOS1jYTAyNWM0OGVkMmMiLCJpZCI6Mzc3Mzg3LCJpYXQiOjE3NjgxNzAyNDN9.rAi0BHXk9BUPEfYxockPHQxu9qvCJ8ifJS0duz7HUl0";
-  const DEFAULT_GOOGLE_MAPS_API_KEY =
-    "AIzaSyDZoPrWVs0BJHxIYSA0-ijn15jN9P1y2M4";
-
-  const START_LOCATION = {
-    longitude: -122.3933,
-    latitude: 37.7937,
-    height: 190.0,
-  };
-
-  const UCD_LOCATION = {
-    longitude: -121.7617,
-    latitude: 38.5382,
-    height: 200.0,
-  };
-
-  const FLIGHT = {
-    horizontalAcceleration: 22.0,
-    maxHorizontalSpeed: 20.0,
-    horizontalDrag: 6.0,
-    verticalAcceleration: 14.0,
-    maxVerticalSpeed: 10.0,
-    verticalDrag: 5.0,
-    yawRate: Cesium.Math.toRadians(90.0),
-    maxVisualPitch: Cesium.Math.toRadians(25.0),
-    maxVisualRoll: Cesium.Math.toRadians(15.0),
-    visualTiltRate: 5.0,
-    visualTiltReturn: 6.0,
-    minimumClearance: 2.0,
-    cameraForwardOffset: -18.0,
-    cameraUpOffset: 6.0,
-    cameraLookAboveOffset: 6.0,
-  };
-
-  /* ─── Building collision configuration ─── */
-  const BUILDING_COLLISION = {
-    enabled: true,
-    activationAltitudeAGL: 500,   // only check below this AGL altitude (meters)
-    minimumClearance: 6.0,         // min distance above building rooftops (meters)
-    forwardCheckDistance: 80,      // forward ray check distance (meters)
-    wallStopDistance: 5,          // full stop when wall is this close (meters)
-    deflectionStrength: 1,      // velocity kill factor at closest range (0-1)
-    pushbackDistance: 3.0,         // meters to push back from wall on hard collision
-  };
-
-  const HUD = {
-    speed: document.getElementById("hud-speed"),
-    altitudeAgl: document.getElementById("hud-altitude-agl"),
-    altitudeMsl: document.getElementById("hud-altitude-msl"),
-    heading: document.getElementById("hud-heading"),
-    attitude: document.getElementById("hud-attitude"),
-    position: document.getElementById("hud-position"),
-    buildingCol: document.getElementById("hud-building-col"),
-    datasetStatus: document.getElementById("dataset-status"),
-    flightStatus: document.getElementById("flight-status"),
-  };
+export function startSimulator(): void {
+  const HUD = getHudElements();
 
   if (!window.Cesium) {
     HUD.datasetStatus.textContent = "Cesium failed to load. Refresh and try again.";
     HUD.flightStatus.textContent = "Startup aborted.";
     return;
   }
-
-  const KEY_BLOCKLIST = new Set([
-    "ArrowUp",
-    "ArrowDown",
-    "ArrowLeft",
-    "ArrowRight",
-    "KeyW",
-    "KeyS",
-    "KeyA",
-    "KeyD",
-    "KeyC",
-    "KeyV",
-  ]);
-
-  /* ─── Gemini Vision Autopilot ─── */
-  const GEMINI_API_KEY = "AIzaSyDQdSe1QCJwz7PyyuvMxsHNOOHaVQb4Ako";
-  let geminiActive = false;
-  let geminiRecorder = null;
-  let geminiCycleTimeout = null;
-  let geminiPending = false;
-  let geminiCommandQueue = []; // queued movement commands
-  let geminiCommandTimer = null; // setTimeout for current command execution
 
   const query = new URLSearchParams(window.location.search);
   const configuredCesiumToken =
@@ -99,10 +47,16 @@ import { GoogleGenAI } from '@google/genai';
     DEFAULT_GOOGLE_MAPS_API_KEY;
 
   if (query.has("cesiumToken")) {
-    window.localStorage.setItem("cesiumToken", query.get("cesiumToken"));
+    const token = query.get("cesiumToken");
+    if (token) {
+      window.localStorage.setItem("cesiumToken", token);
+    }
   }
   if (query.has("googleApiKey")) {
-    window.localStorage.setItem("googleApiKey", query.get("googleApiKey"));
+    const apiKey = query.get("googleApiKey");
+    if (apiKey) {
+      window.localStorage.setItem("googleApiKey", apiKey);
+    }
   }
 
   Cesium.Ion.defaultAccessToken = configuredCesiumToken;
@@ -141,31 +95,24 @@ import { GoogleGenAI } from '@google/genai';
     cameraPosition: new Cesium.Cartesian3(),
     upOffset: new Cesium.Cartesian3(),
     cartographic: new Cesium.Cartographic(),
-    surfaceNormal: new Cesium.Cartesian3(),
-    // Building collision scratch
-    buildingRayDirection: new Cesium.Cartesian3(),
     buildingCartographic: new Cesium.Cartographic(),
+    surfaceNormal: new Cesium.Cartesian3(),
   };
 
-  const keyState = new Set();
-  let viewer = null;
+  const keyState = new Set<string>();
+  let viewer: any = null;
   let lastTime = performance.now();
 
   /* ─── Drone Cesium entity state ─── */
   const droneHpr = new Cesium.HeadingPitchRoll();
   const droneModelOrientation = new Cesium.Quaternion();
-  let droneEntity = null;
+  let droneEntity: any = null;
 
   /* ─── Camera mode ─── */
-  const CAMERA_CHASE = 0;
-  const CAMERA_FPV = 1;
   let cameraMode = CAMERA_CHASE;
-  const CHASE_FOV = Cesium.Math.toRadians(119.6);
-  const FPV_FOV = Cesium.Math.toRadians(140.0);
-  const FPV_PITCH_DOWN = Cesium.Math.toRadians(-45.0);
-  let fpvOverlay = null;
-  let fpvHudAlt = null;
-  let fpvHudSpd = null;
+  let fpvOverlay: HTMLDivElement | null = null;
+  let fpvHudAlt: HTMLSpanElement | null = null;
+  let fpvHudSpd: HTMLSpanElement | null = null;
 
   /* ─── Dynamic resolution scaling ─── */
   const DRS = {
@@ -198,48 +145,24 @@ import { GoogleGenAI } from '@google/genai';
     }
   }
 
-  /* ─── Building collision state ─── */
-  let buildingCollisionActive = false;   // true when below activation altitude
-  let lastBuildingHitDistance = Infinity; // distance to nearest forward obstacle
-
   /* ─── Cloud immersion state ─── */
-  let cloudFogOverlay = null;
+  let cloudFogOverlay: HTMLDivElement | null = null;
   let currentCloudImmersion = 0; // smoothed 0..1
   let currentCesiumFade = 1.0;   // smoothed terrain visibility (0=hidden, 1=visible)
-  let googleTilesRef = null;      // reference to 3D tileset primitive
-  let osmBuildingsRef = null;     // reference to OSM buildings primitive
+  let googleTilesRef: any = null;      // reference to 3D tileset primitive
+  let osmBuildingsRef: any = null;     // reference to OSM buildings primitive
 
   /* ─── Speed multiplier ─── */
-  const SPEED_TIERS = [1, 3, 5, 10];
   let speedTierIndex = 0;
   let speedMultiplier = SPEED_TIERS[0];
 
-  function setSpeedTier(index) {
+  function setSpeedTier(index: number) {
     speedTierIndex = Math.max(0, Math.min(index, SPEED_TIERS.length - 1));
     speedMultiplier = SPEED_TIERS[speedTierIndex];
-    updateSpeedTierHUD();
+    updateSpeedTierHud(speedTierIndex, speedMultiplier, SPEED_TIERS);
   }
 
-  function updateSpeedTierHUD() {
-    const el = document.getElementById("hud-speed-tier");
-    if (el) {
-      el.textContent = `${speedMultiplier}x`;
-    }
-    // Update button states
-    SPEED_TIERS.forEach((tier, i) => {
-      const btn = document.getElementById(`speed-btn-${tier}`);
-      if (btn) {
-        btn.classList.toggle("active", i === speedTierIndex);
-      }
-    });
-  }
-
-  function setFlightStatus(text, isWarning) {
-    HUD.flightStatus.textContent = text;
-    HUD.flightStatus.style.color = isWarning ? "#ffd36f" : "#d9ecff";
-  }
-
-  function isDown(code) {
+  function isDown(code: string): boolean {
     return keyState.has(code);
   }
 
@@ -444,46 +367,38 @@ import { GoogleGenAI } from '@google/genai';
     }
   }
 
-  /* ─── Building collision (rooftop + wall) ───
-   * Uses scene.sampleHeight() for height-based collision (terrain + 3D tiles)
-   * and scene.pickFromRay() for forward wall detection.
-   * Only active below BUILDING_COLLISION.activationAltitudeAGL to keep cost low.
-   */
-  function enforceBuildingCollision() {
-    if (!BUILDING_COLLISION.enabled || !viewer || !viewer.scene) return;
+  function enforceBuildingCollision(): void {
+    if (!BUILDING_COLLISION.enabled || !viewer || !viewer.scene) {
+      return;
+    }
 
-    buildingCollisionActive = false;
-    lastBuildingHitDistance = Infinity;
-
-    // Need sampleHeight support (requires WebGL depth texture)
     const scene = viewer.scene;
     const hasSampleHeight = scene.sampleHeightSupported;
-    const hasPickFromRay = typeof scene.pickFromRay === 'function';
+    const hasPickFromRay = typeof scene.pickFromRay === "function";
+    if (!hasSampleHeight && !hasPickFromRay) {
+      return;
+    }
 
-    if (!hasSampleHeight && !hasPickFromRay) return;
-
-    // Compute current AGL to decide activation
     Cesium.Cartographic.fromCartesian(
-      drone.position, Cesium.Ellipsoid.WGS84, scratch.buildingCartographic,
+      drone.position,
+      Cesium.Ellipsoid.WGS84,
+      scratch.buildingCartographic,
     );
     const agl = scratch.buildingCartographic.height - drone.lastGroundHeight;
-    if (agl > BUILDING_COLLISION.activationAltitudeAGL) return;
+    if (agl > BUILDING_COLLISION.activationAltitudeAGL) {
+      return;
+    }
 
-    buildingCollisionActive = true;
-
-    // Build exclusion list (exclude the F-22 so we don't self-collide)
     const excludeList = droneEntity ? [droneEntity] : [];
 
-    /* ── 1. Height-based collision (rooftop) ──
-     * scene.sampleHeight returns the height of the tallest scene geometry
-     * (terrain + 3D tiles) at the given lat/lon. If the drone is below that
-     * height, it gets pushed up — prevents flying through rooftops. */
     if (hasSampleHeight) {
-      const sceneHeight = scene.sampleHeight(scratch.buildingCartographic, excludeList);
+      const sceneHeight = scene.sampleHeight(
+        scratch.buildingCartographic,
+        excludeList,
+      );
       if (Number.isFinite(sceneHeight)) {
         const minHeight = sceneHeight + BUILDING_COLLISION.minimumClearance;
         if (scratch.buildingCartographic.height < minHeight) {
-          // Snap drone above the building
           scratch.buildingCartographic.height = minHeight;
           Cesium.Cartesian3.fromRadians(
             scratch.buildingCartographic.longitude,
@@ -493,65 +408,78 @@ import { GoogleGenAI } from '@google/genai';
             drone.position,
           );
 
-          // Kill downward vertical speed
           if (drone.verticalSpeed < 0.0) {
             drone.verticalSpeed = 0.0;
           }
 
-          // Strip any downward component from horizontal velocity
-          Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
-          const hVertComponent = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
+          Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(
+            drone.position,
+            scratch.surfaceNormal,
+          );
+          const hVertComponent = Cesium.Cartesian3.dot(
+            drone.horizontalVelocity,
+            scratch.surfaceNormal,
+          );
           if (hVertComponent < 0.0) {
             Cesium.Cartesian3.multiplyByScalar(
-              scratch.surfaceNormal, hVertComponent, scratch.velocityStep,
+              scratch.surfaceNormal,
+              hVertComponent,
+              scratch.velocityStep,
             );
-            Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+            Cesium.Cartesian3.subtract(
+              drone.horizontalVelocity,
+              scratch.velocityStep,
+              drone.horizontalVelocity,
+            );
           }
         }
       }
     }
 
-    /* ── 2. Forward wall collision ──
-     * Cast a ray in the drone's forward direction. If it hits scene geometry
-     * within forwardCheckDistance, progressively brake; if within wallStopDistance,
-     * fully stop and push the drone back. */
     if (hasPickFromRay) {
       const speed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
-      if (speed > 1.0) {
-        // Forward ray
-        const forwardRay = new Cesium.Ray(drone.position, scratch.forward);
-        const forwardHit = scene.pickFromRay(forwardRay, excludeList);
+      if (speed <= 1.0) {
+        return;
+      }
 
-        if (forwardHit && forwardHit.position) {
-          const distance = Cesium.Cartesian3.distance(drone.position, forwardHit.position);
-          lastBuildingHitDistance = distance;
+      const forwardRay = new Cesium.Ray(drone.position, scratch.forward);
+      const forwardHit = scene.pickFromRay(forwardRay, excludeList);
+      if (!forwardHit || !forwardHit.position) {
+        return;
+      }
 
-          if (distance < BUILDING_COLLISION.forwardCheckDistance) {
-            // Progressive braking: closer → stronger
-            const t = 1.0 - (distance / BUILDING_COLLISION.forwardCheckDistance);
-            const deflection = t * t * BUILDING_COLLISION.deflectionStrength; // quadratic ramp
-            Cesium.Cartesian3.multiplyByScalar(
-              drone.horizontalVelocity, 1.0 - deflection, drone.horizontalVelocity,
-            );
+      const distance = Cesium.Cartesian3.distance(
+        drone.position,
+        forwardHit.position,
+      );
+      if (distance >= BUILDING_COLLISION.forwardCheckDistance) {
+        return;
+      }
 
-            // Hard stop + pushback when very close to a wall
-            if (distance < BUILDING_COLLISION.wallStopDistance) {
-              // Push drone backward away from the wall
-              Cesium.Cartesian3.multiplyByScalar(
-                scratch.forward,
-                -BUILDING_COLLISION.pushbackDistance,
-                scratch.velocityStep,
-              );
-              Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
+      const t = 1.0 - distance / BUILDING_COLLISION.forwardCheckDistance;
+      const deflection = t * t * BUILDING_COLLISION.deflectionStrength;
+      Cesium.Cartesian3.multiplyByScalar(
+        drone.horizontalVelocity,
+        1.0 - deflection,
+        drone.horizontalVelocity,
+      );
 
-              // Kill all velocity
-              drone.horizontalVelocity.x = 0.0;
-              drone.horizontalVelocity.y = 0.0;
-              drone.horizontalVelocity.z = 0.0;
-              drone.verticalSpeed = 0.0;
-            }
-          }
-        }
+      if (distance < BUILDING_COLLISION.wallStopDistance) {
+        Cesium.Cartesian3.multiplyByScalar(
+          scratch.forward,
+          -BUILDING_COLLISION.pushbackDistance,
+          scratch.velocityStep,
+        );
+        Cesium.Cartesian3.add(
+          drone.position,
+          scratch.velocityStep,
+          drone.position,
+        );
+
+        drone.horizontalVelocity.x = 0.0;
+        drone.horizontalVelocity.y = 0.0;
+        drone.horizontalVelocity.z = 0.0;
+        drone.verticalSpeed = 0.0;
       }
     }
   }
@@ -634,26 +562,6 @@ import { GoogleGenAI } from '@google/genai';
     HUD.position.textContent =
       `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
       `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
-
-    // Building collision HUD
-    if (HUD.buildingCol) {
-      if (!BUILDING_COLLISION.enabled) {
-        HUD.buildingCol.textContent = 'OFF';
-        HUD.buildingCol.style.color = '';
-      } else if (!buildingCollisionActive) {
-        HUD.buildingCol.textContent = 'STANDBY';
-        HUD.buildingCol.style.color = '#888';
-      } else if (lastBuildingHitDistance < BUILDING_COLLISION.wallStopDistance) {
-        HUD.buildingCol.textContent = `WALL ${lastBuildingHitDistance.toFixed(0)}m`;
-        HUD.buildingCol.style.color = '#ff4444';
-      } else if (lastBuildingHitDistance < BUILDING_COLLISION.forwardCheckDistance) {
-        HUD.buildingCol.textContent = `WARN ${lastBuildingHitDistance.toFixed(0)}m`;
-        HUD.buildingCol.style.color = '#ffaa00';
-      } else {
-        HUD.buildingCol.textContent = 'ACTIVE';
-        HUD.buildingCol.style.color = '#44ff44';
-      }
-    }
   }
 
   function resetPosition() {
@@ -677,215 +585,16 @@ import { GoogleGenAI } from '@google/genai';
     updateCamera();
   }
 
-  function startGeminiRecording() {
-    if (!viewer) return;
-    const stream = viewer.canvas.captureStream(10); // 10 fps
-    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
-      ? 'video/webm;codecs=vp8'
-      : 'video/webm';
-    geminiRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 500000 });
-    const chunks = [];
-    geminiRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
-    geminiRecorder.onstop = async () => {
-      if (!geminiActive) return;
-      const blob = new Blob(chunks, { type: mimeType });
-      await sendToGemini(blob, mimeType);
-      // Start next cycle if still active
-      if (geminiActive) {
-        startGeminiRecording();
-      }
-    };
-    geminiRecorder.start();
-    // Stop after 5 seconds to send the clip
-    geminiCycleTimeout = setTimeout(() => {
-      if (geminiRecorder && geminiRecorder.state === 'recording') {
-        geminiRecorder.stop();
-      }
-    }, 5000);
-  }
-
-  const GEMINI_PILOT_PROMPT = `You are piloting an FPV drone in a 3D city simulator. You see the live camera feed.
-
-Your mission: fly between buildings without hitting them. Navigate through streets and gaps.
-
-You control the drone by outputting a sequence of movement commands. Each command is:
-DIRECTION-SPEED-TIME
-
-DIRECTION: FORWARD, BACKWARD, LEFT, RIGHT, UP, DOWN
-SPEED: speed multiplier (integer). 10 is slow/careful, 30 is moderate, 60 is fast, 100 is very fast. Use lower speeds near buildings.
-TIME: duration in seconds (1-5)
-
-You can chain multiple commands, one per line. Example:
-FORWARD-30-3
-LEFT-20-2
-FORWARD-50-4
-UP-15-1
-
-Rules:
-- Look at the video feed and decide where to go next
-- If buildings are close, slow down and steer around them
-- Prefer flying forward through open spaces between buildings
-- If you're about to hit something, go UP or turn LEFT/RIGHT
-- Output ONLY the commands, nothing else. No explanation. 3-6 commands per response.`;
-
-  const DIRECTION_KEYS = {
-    FORWARD: 'ArrowUp',
-    BACKWARD: 'ArrowDown',
-    LEFT: 'ArrowLeft',
-    RIGHT: 'ArrowRight',
-    UP: 'KeyW',
-    DOWN: 'KeyS',
-  };
-
-  function parseGeminiCommands(text) {
-    const commands = [];
-    const lines = text.trim().split('\n');
-    for (const line of lines) {
-      const match = line.trim().match(/^(FORWARD|BACKWARD|LEFT|RIGHT|UP|DOWN)-(\d+)-(\d+)$/i);
-      if (match) {
-        commands.push({
-          direction: match[1].toUpperCase(),
-          speed: Math.max(1, Math.min(100, parseInt(match[2], 10))),
-          time: Math.max(1, Math.min(5, parseInt(match[3], 10))),
-        });
-      }
-    }
-    return commands;
-  }
-
-  function executeGeminiCommands(commands) {
-    const textEl = document.getElementById('gemini-text');
-    geminiCommandQueue = commands.slice();
-    executeNextCommand(textEl);
-  }
-
-  function executeNextCommand(textEl) {
-    if (!geminiActive || geminiCommandQueue.length === 0) {
-      // Done executing — start next recording cycle
-      if (geminiActive) startGeminiRecording();
-      return;
-    }
-
-    const cmd = geminiCommandQueue.shift();
-    const key = DIRECTION_KEYS[cmd.direction];
-    if (!key) {
-      executeNextCommand(textEl);
-      return;
-    }
-
-    // Set speed: map cmd.speed to the closest tier
-    // Tiers: 0=1x, 1=3x, 2=5x, 3=10x
-    // cmd.speed 1-20 → tier 3 (10x), 21-40 → tier 3, we'll use raw multiplier instead
-    // Actually let's directly set speedMultiplier to cmd.speed for finer control
-    speedMultiplier = cmd.speed;
-
-    if (textEl) {
-      const remaining = [cmd, ...geminiCommandQueue].map(c => `${c.direction}-${c.speed}-${c.time}`).join('\n');
-      textEl.textContent = `Executing:\n${remaining}`;
-    }
-
-    // Press the key
-    keyState.add(key);
-
-    // Release after cmd.time seconds, then execute next
-    geminiCommandTimer = setTimeout(() => {
-      keyState.delete(key);
-      // Small gap before next command
-      geminiCommandTimer = setTimeout(() => executeNextCommand(textEl), 100);
-    }, cmd.time * 1000);
-  }
-
-  async function sendToGemini(blob, mimeType) {
-    const textEl = document.getElementById('gemini-text');
-    geminiPending = true;
-    try {
-      const arrayBuf = await blob.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuf);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64 = btoa(binary);
-
-      if (textEl) textEl.textContent = 'Thinking...';
-
-      const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-      const response = await ai.models.generateContentStream({
-        model: 'gemini-3-flash-preview',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { inlineData: { data: base64, mimeType } },
-              { text: GEMINI_PILOT_PROMPT },
-            ],
-          },
-        ],
-      });
-
-      let fullText = '';
-      for await (const chunk of response) {
-        if (chunk.text) {
-          fullText += chunk.text;
-        }
-      }
-
-      console.log('[Gemini] Raw response:', fullText);
-      const commands = parseGeminiCommands(fullText);
-
-      if (commands.length > 0) {
-        if (textEl) textEl.textContent = commands.map(c => `${c.direction}-${c.speed}-${c.time}`).join('\n');
-        executeGeminiCommands(commands);
-      } else {
-        if (textEl) textEl.textContent = 'No valid commands. Retrying...';
-        console.warn('[Gemini] No parseable commands from:', fullText);
-        if (geminiActive) startGeminiRecording();
-      }
-    } catch (err) {
-      console.error('[Gemini] API error:', err);
-      if (textEl) textEl.textContent = 'Error: ' + err.message;
-      if (geminiActive) startGeminiRecording();
-    }
-    geminiPending = false;
-  }
-
-  function stopGemini() {
-    if (geminiCycleTimeout) {
-      clearTimeout(geminiCycleTimeout);
-      geminiCycleTimeout = null;
-    }
-    if (geminiCommandTimer) {
-      clearTimeout(geminiCommandTimer);
-      geminiCommandTimer = null;
-    }
-    geminiCommandQueue = [];
-    // Release any keys Gemini might be holding
-    Object.values(DIRECTION_KEYS).forEach(k => keyState.delete(k));
-    // Restore speed to tier 0
-    setSpeedTier(0);
-    if (geminiRecorder && geminiRecorder.state === 'recording') {
-      geminiRecorder.onstop = null;
-      geminiRecorder.stop();
-    }
-    geminiRecorder = null;
-    const overlay = document.getElementById('gemini-overlay');
-    if (overlay) overlay.style.display = 'none';
-  }
-
-  function toggleGemini() {
-    geminiActive = !geminiActive;
-    if (geminiActive) {
-      const overlay = document.getElementById('gemini-overlay');
-      const textEl = document.getElementById('gemini-text');
-      if (overlay) overlay.style.display = 'block';
-      if (textEl) textEl.textContent = 'Recording 5s clip...';
-      startGeminiRecording();
-    } else {
-      stopGemini();
-    }
-  }
+  const geminiController = new GeminiController({
+    getViewer: () => viewer,
+    keyState,
+    setSpeedMultiplier: (value) => {
+      speedMultiplier = value;
+    },
+    resetSpeed: () => {
+      setSpeedTier(0);
+    },
+  });
 
   function setupInputHandlers() {
     document.addEventListener("keydown", (event) => {
@@ -903,7 +612,7 @@ Rules:
       }
       if (event.code === "KeyV") {
         event.preventDefault();
-        toggleGemini();
+        geminiController.toggle();
       }
       // Speed tier keys: 1 = 1x, 2 = 3x, 3 = 5x, 4 = 10x
       if (event.code === "Digit1") setSpeedTier(0);
@@ -923,7 +632,7 @@ Rules:
         btn.addEventListener("click", () => setSpeedTier(i));
       }
     });
-    updateSpeedTierHUD();
+    updateSpeedTierHud(speedTierIndex, speedMultiplier, SPEED_TIERS);
 
     const ucdBtn = document.getElementById("teleport-ucd");
     if (ucdBtn) {
@@ -1100,112 +809,6 @@ Rules:
   }
 
   /* ─── Cloud Immersion Update ─── */
-  function createCloudFogOverlay() {
-    cloudFogOverlay = document.createElement('div');
-    cloudFogOverlay.id = 'cloud-fog-overlay';
-    cloudFogOverlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
-      z-index: 3;
-      opacity: 0;
-      transition: opacity 0.15s ease;
-      background: radial-gradient(
-        ellipse at 50% 50%,
-        rgba(220, 225, 235, 0.97) 0%,
-        rgba(195, 205, 220, 0.93) 35%,
-        rgba(175, 185, 200, 0.88) 65%,
-        rgba(160, 170, 185, 0.82) 100%
-      );
-      mix-blend-mode: normal;
-    `;
-    document.body.insertBefore(cloudFogOverlay, document.getElementById('hud'));
-  }
-
-  function createFpvOverlay() {
-    fpvOverlay = document.createElement('div');
-    fpvOverlay.id = 'fpv-overlay';
-    fpvOverlay.style.cssText = `
-      position: fixed; inset: 0; width: 100%; height: 100%;
-      pointer-events: none; z-index: 5; display: none;
-    `;
-
-    // Vignette layer
-    const vignette = document.createElement('div');
-    vignette.style.cssText = `
-      position: absolute; inset: 0;
-      background: radial-gradient(
-        ellipse 70% 65% at 50% 50%,
-        transparent 0%,
-        transparent 45%,
-        rgba(0,0,0,0.18) 62%,
-        rgba(0,0,0,0.45) 78%,
-        rgba(0,0,0,0.82) 100%
-      );
-    `;
-    fpvOverlay.appendChild(vignette);
-
-    // Letterbox bars
-    const barStyle = `position: absolute; left: 0; right: 0; height: 3.5%; background: #000;`;
-    const topBar = document.createElement('div');
-    topBar.style.cssText = barStyle + 'top: 0;';
-    const bottomBar = document.createElement('div');
-    bottomBar.style.cssText = barStyle + 'bottom: 0;';
-    fpvOverlay.appendChild(topBar);
-    fpvOverlay.appendChild(bottomBar);
-
-    // Film grain (animated noise via CSS)
-    const grain = document.createElement('div');
-    grain.style.cssText = `
-      position: absolute; inset: 0; opacity: 0.06; mix-blend-mode: overlay;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-      background-size: 128px 128px;
-      animation: fpv-grain 0.08s steps(2) infinite;
-    `;
-    fpvOverlay.appendChild(grain);
-
-    // Slight color tint for cinematic warmth
-    const tint = document.createElement('div');
-    tint.style.cssText = `
-      position: absolute; inset: 0; opacity: 0.07;
-      background: linear-gradient(180deg, rgba(255,180,100,0.3) 0%, transparent 40%, rgba(80,120,200,0.2) 100%);
-      mix-blend-mode: overlay;
-    `;
-    fpvOverlay.appendChild(tint);
-
-    // FPV telemetry HUD
-    const hudContainer = document.createElement('div');
-    hudContainer.style.cssText = `
-      position: absolute; bottom: 6%; left: 50%; transform: translateX(-50%);
-      display: flex; gap: 2.5rem; align-items: baseline;
-      font-family: 'Space Mono', monospace; font-size: 1.05rem;
-      color: rgba(255,255,255,0.88); text-shadow: 0 0 8px rgba(0,0,0,0.9), 0 1px 3px rgba(0,0,0,0.7);
-      letter-spacing: 0.04em;
-    `;
-
-    fpvHudAlt = document.createElement('span');
-    fpvHudAlt.textContent = 'ALT 0.0 m';
-    fpvHudSpd = document.createElement('span');
-    fpvHudSpd.textContent = 'SPD 0.0 m/s';
-
-    hudContainer.appendChild(fpvHudAlt);
-    hudContainer.appendChild(fpvHudSpd);
-    fpvOverlay.appendChild(hudContainer);
-
-    document.body.appendChild(fpvOverlay);
-
-    // Inject grain animation keyframes
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes fpv-grain {
-        0% { transform: translate(0,0); }
-        100% { transform: translate(-8px, -8px); }
-      }
-    `;
-    document.head.appendChild(style);
-  }
 
   function toggleCameraMode() {
     cameraMode = cameraMode === CAMERA_CHASE ? CAMERA_FPV : CAMERA_CHASE;
@@ -1291,7 +894,7 @@ Rules:
     }
   }
 
-  function stepFrame(now) {
+  function stepFrame(now: number): void {
     const dt = Math.min(0.033, Math.max(0.001, (now - lastTime) / 1000.0));
     lastTime = now;
 
@@ -1326,10 +929,14 @@ Rules:
 
     // Render the three-geospatial atmospheric overlay in sync with the Cesium camera.
     // Wrapped in try-catch so overlay errors never break the flight loop.
-    try { updateGeospatialOverlay(viewer); } catch (_) { }
+    try {
+      updateGeospatialOverlay(viewer);
+    } catch (_) {
+      // Keep the simulation loop running if overlay rendering fails.
+    }
   }
 
-  async function init() {
+  async function init(): Promise<void> {
     HUD.datasetStatus.textContent = "Booting Cesium viewer and streaming terrain...";
     try {
       await buildViewer();
@@ -1350,8 +957,11 @@ Rules:
       setupInputHandlers();
 
       // Create the cloud fog overlay element
-      createCloudFogOverlay();
-      createFpvOverlay();
+      cloudFogOverlay = createCloudFogOverlay();
+      const fpv = createFpvOverlay();
+      fpvOverlay = fpv.overlay;
+      fpvHudAlt = fpv.altitude;
+      fpvHudSpd = fpv.speed;
 
       resetPosition();
       lastTime = performance.now();
@@ -1366,6 +976,7 @@ Rules:
       requestAnimationFrame(frameLoop);
 
       setFlightStatus(
+        HUD,
         "Flight active. W/S ascend/descend, arrows move/yaw, A/D strafe.",
         false,
       );
@@ -1373,15 +984,15 @@ Rules:
       // Initialize the three-geospatial atmospheric overlay asynchronously.
       // This precomputes atmosphere textures and streams cloud data — it can
       // take several seconds but must never block the flight loop.
-      initGeospatialOverlay(viewer).catch((err) => {
-        console.error('[init] Atmospheric overlay failed to initialize:', err);
+      initGeospatialOverlay(viewer).catch((err: unknown) => {
+        console.error("[init] Atmospheric overlay failed to initialize:", err);
       });
     } catch (error) {
       console.error(error);
       HUD.datasetStatus.textContent = "Initialization failed.";
-      setFlightStatus("Check browser console for the startup error.", true);
+      setFlightStatus(HUD, "Check browser console for the startup error.", true);
     }
   }
 
   init();
-})();
+}
