@@ -18,6 +18,7 @@ export const UCD_LOCATION = {
 };
 
 export const FLIGHT = {
+  gravity: 9.81,
   horizontalAcceleration: 22.0,
   maxHorizontalSpeed: 20.0,
   horizontalDrag: 6.0,
@@ -43,6 +44,10 @@ export const BUILDING_COLLISION = {
   wallStopDistance: 5,
   deflectionStrength: 1,
   pushbackDistance: 3.0,
+  numRays: 5,
+  reflectOnImpact: true,
+  slideAlongSurface: true,
+  energyLoss: 0.3,
 };
 
 export const CHASE_FOV = Cesium.Math.toRadians(119.6);

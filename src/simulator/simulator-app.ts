@@ -18,7 +18,16 @@ import {
   START_LOCATION,
   UCD_LOCATION,
 } from "./config";
+import { FlightMetrics } from "./flight-metrics";
 import { GeminiController } from "./gemini-controller";
+import {
+  loadPlayground as loadPlaygroundAssets,
+  unloadPlayground,
+  slalomPlayground,
+  ringCoursePlayground,
+  mazePlayground,
+} from "./playgrounds";
+import type { Playground } from "./playgrounds/types";
 import {
   createCloudFogOverlay,
   createFpvOverlay,
@@ -97,11 +106,23 @@ export function startSimulator(): void {
     cartographic: new Cesium.Cartographic(),
     buildingCartographic: new Cesium.Cartographic(),
     surfaceNormal: new Cesium.Cartesian3(),
+    rayDir: new Cesium.Cartesian3(),
+    reflectStep: new Cesium.Cartesian3(),
   };
 
   const keyState = new Set<string>();
   let viewer: any = null;
   let lastTime = performance.now();
+
+  const PLAYGROUNDS: Playground[] = [
+    slalomPlayground,
+    ringCoursePlayground,
+    mazePlayground,
+  ];
+  let activePlayground: Playground | null = null;
+  let playgroundObstacleEntities: any[] = [];
+  let worldTerrainProvider: any = null;
+  const flightMetrics = new FlightMetrics();
 
   /* ─── Drone Cesium entity state ─── */
   const droneHpr = new Cesium.HeadingPitchRoll();
@@ -310,9 +331,11 @@ export function startSimulator(): void {
       );
     }
 
-    // ── Vertical channel: W/S → thrust along surface normal ──
+    // ── Vertical channel: W/S → thrust along surface normal, gravity always applies ──
     const vertInput = (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
 
+    // Gravity pulls down; thrust opposes it
+    drone.verticalSpeed -= FLIGHT.gravity * dt;
     if (vertInput !== 0) {
       drone.verticalSpeed += vertInput * FLIGHT.verticalAcceleration * sm * dt;
     }
@@ -343,6 +366,7 @@ export function startSimulator(): void {
     }
     const minHeight = drone.lastGroundHeight + FLIGHT.minimumClearance;
     if (scratch.cartographic.height < minHeight) {
+      flightMetrics.recordCollision();
       scratch.cartographic.height = minHeight;
       Cesium.Cartesian3.fromRadians(
         scratch.cartographic.longitude,
@@ -399,6 +423,7 @@ export function startSimulator(): void {
       if (Number.isFinite(sceneHeight)) {
         const minHeight = sceneHeight + BUILDING_COLLISION.minimumClearance;
         if (scratch.buildingCartographic.height < minHeight) {
+          flightMetrics.recordCollision();
           scratch.buildingCartographic.height = minHeight;
           Cesium.Cartesian3.fromRadians(
             scratch.buildingCartographic.longitude,
@@ -442,44 +467,83 @@ export function startSimulator(): void {
         return;
       }
 
-      const forwardRay = new Cesium.Ray(drone.position, scratch.forward);
-      const forwardHit = scene.pickFromRay(forwardRay, excludeList);
-      if (!forwardHit || !forwardHit.position) {
+      const numRays = BUILDING_COLLISION.numRays ?? 5;
+      const rayDirs: Cesium.Cartesian3[] = [];
+      rayDirs.push(Cesium.Cartesian3.clone(scratch.forward, new Cesium.Cartesian3()));
+      if (numRays >= 5) {
+        Cesium.Cartesian3.subtract(scratch.forward, scratch.right, scratch.rayDir);
+        Cesium.Cartesian3.normalize(scratch.rayDir, scratch.rayDir);
+        rayDirs.push(Cesium.Cartesian3.clone(scratch.rayDir, new Cesium.Cartesian3()));
+        Cesium.Cartesian3.add(scratch.forward, scratch.right, scratch.rayDir);
+        Cesium.Cartesian3.normalize(scratch.rayDir, scratch.rayDir);
+        rayDirs.push(Cesium.Cartesian3.clone(scratch.rayDir, new Cesium.Cartesian3()));
+        Cesium.Cartesian3.negate(scratch.right, scratch.rayDir);
+        rayDirs.push(Cesium.Cartesian3.clone(scratch.rayDir, new Cesium.Cartesian3()));
+        rayDirs.push(Cesium.Cartesian3.clone(scratch.right, new Cesium.Cartesian3()));
+      }
+
+      let closestDistance = BUILDING_COLLISION.forwardCheckDistance + 1;
+      let closestHit: { position: Cesium.Cartesian3; rayDir: Cesium.Cartesian3 } | null = null;
+
+      for (const rayDir of rayDirs) {
+        const ray = new Cesium.Ray(drone.position, rayDir);
+        const hit = scene.pickFromRay(ray, excludeList);
+        if (hit?.position) {
+          const distance = Cesium.Cartesian3.distance(drone.position, hit.position);
+          if (distance < closestDistance) {
+            closestDistance = distance;
+            closestHit = { position: hit.position, rayDir };
+          }
+        }
+      }
+
+      if (!closestHit || closestDistance >= BUILDING_COLLISION.forwardCheckDistance) {
         return;
       }
 
-      const distance = Cesium.Cartesian3.distance(
-        drone.position,
-        forwardHit.position,
-      );
-      if (distance >= BUILDING_COLLISION.forwardCheckDistance) {
-        return;
-      }
+      flightMetrics.recordCollision();
+      const distance = closestDistance;
+      const hitNormal = scratch.rayDir;
+      Cesium.Cartesian3.negate(closestHit.rayDir, hitNormal);
 
-      const t = 1.0 - distance / BUILDING_COLLISION.forwardCheckDistance;
-      const deflection = t * t * BUILDING_COLLISION.deflectionStrength;
-      Cesium.Cartesian3.multiplyByScalar(
-        drone.horizontalVelocity,
-        1.0 - deflection,
-        drone.horizontalVelocity,
-      );
+      if (BUILDING_COLLISION.reflectOnImpact ?? true) {
+        const vDotN = Cesium.Cartesian3.dot(drone.horizontalVelocity, hitNormal);
+        if (vDotN < 0) {
+          const loss = 1 - (BUILDING_COLLISION.energyLoss ?? 0.3);
+          Cesium.Cartesian3.multiplyByScalar(hitNormal, -2 * vDotN * loss, scratch.reflectStep);
+          Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.reflectStep, drone.horizontalVelocity);
+          if (BUILDING_COLLISION.slideAlongSurface) {
+            const vDotN2 = Cesium.Cartesian3.dot(drone.horizontalVelocity, hitNormal);
+            if (vDotN2 > 0) {
+              Cesium.Cartesian3.multiplyByScalar(hitNormal, vDotN2, scratch.reflectStep);
+              Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.reflectStep, drone.horizontalVelocity);
+            }
+          }
+        }
+      } else {
+        const t = 1.0 - distance / BUILDING_COLLISION.forwardCheckDistance;
+        const deflection = t * t * BUILDING_COLLISION.deflectionStrength;
+        Cesium.Cartesian3.multiplyByScalar(
+          drone.horizontalVelocity,
+          1.0 - deflection,
+          drone.horizontalVelocity,
+        );
+      }
 
       if (distance < BUILDING_COLLISION.wallStopDistance) {
         Cesium.Cartesian3.multiplyByScalar(
-          scratch.forward,
-          -BUILDING_COLLISION.pushbackDistance,
+          hitNormal,
+          BUILDING_COLLISION.pushbackDistance,
           scratch.velocityStep,
         );
-        Cesium.Cartesian3.add(
-          drone.position,
-          scratch.velocityStep,
-          drone.position,
-        );
+        Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
 
-        drone.horizontalVelocity.x = 0.0;
-        drone.horizontalVelocity.y = 0.0;
-        drone.horizontalVelocity.z = 0.0;
-        drone.verticalSpeed = 0.0;
+        if (!BUILDING_COLLISION.reflectOnImpact) {
+          drone.horizontalVelocity.x = 0.0;
+          drone.horizontalVelocity.y = 0.0;
+          drone.horizontalVelocity.z = 0.0;
+          drone.verticalSpeed = 0.0;
+        }
       }
     }
   }
@@ -562,6 +626,21 @@ export function startSimulator(): void {
     HUD.position.textContent =
       `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
       `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
+
+    const metricsEl = document.getElementById("metrics-display");
+    if (metricsEl) {
+      const result = flightMetrics.getResult(
+        activePlayground?.timeLimit,
+        (lon, lat, h) => {
+          const c = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+          return { x: c.x, y: c.y, z: c.z };
+        }
+      );
+      const wpTotal = activePlayground?.waypoints?.length ?? 0;
+      const wpReached = result.waypointsReached.size;
+      metricsEl.textContent =
+        `Collisions: ${result.collisionCount} | Waypoints: ${wpReached}/${wpTotal} | Score: ${result.score.toFixed(2)}`;
+    }
   }
 
   function resetPosition() {
@@ -583,6 +662,38 @@ export function startSimulator(): void {
     updateHorizontalAxes();
     updateWorldAxes();
     updateCamera();
+  }
+
+  function switchToPlayground(playground: Playground) {
+    unloadPlayground(viewer, playgroundObstacleEntities);
+    playgroundObstacleEntities = [];
+
+    const result = loadPlaygroundAssets(playground, viewer);
+    playgroundObstacleEntities = result.obstacleEntities;
+    viewer.terrainProvider = result.terrainProvider;
+    if (googleTilesRef) googleTilesRef.show = false;
+    if (osmBuildingsRef) osmBuildingsRef.show = false;
+    activePlayground = playground;
+
+    teleportTo(playground.spawn);
+    flightMetrics.reset(playground.waypoints);
+    HUD.datasetStatus.textContent = `Playground: ${playground.name}`;
+  }
+
+  function switchToRealWorld() {
+    unloadPlayground(viewer, playgroundObstacleEntities);
+    playgroundObstacleEntities = [];
+    activePlayground = null;
+
+    if (worldTerrainProvider) {
+      viewer.terrainProvider = worldTerrainProvider;
+    }
+    if (googleTilesRef) googleTilesRef.show = true;
+    if (osmBuildingsRef) osmBuildingsRef.show = true;
+
+    teleportTo(START_LOCATION);
+    flightMetrics.reset();
+    HUD.datasetStatus.textContent = "Cesium World Terrain + 3D Tiles";
   }
 
   const geminiController = new GeminiController({
@@ -638,9 +749,32 @@ export function startSimulator(): void {
     if (ucdBtn) {
       ucdBtn.addEventListener("click", () => {
         teleportTo(UCD_LOCATION);
-        // Remove focus from button so keyboard controls work immediately
         ucdBtn.blur();
       });
+    }
+
+    const playgroundBtns = [
+      { id: "playground-none", playground: null },
+      { id: "playground-slalom", playground: slalomPlayground },
+      { id: "playground-ring", playground: ringCoursePlayground },
+      { id: "playground-maze", playground: mazePlayground },
+    ];
+    for (const { id, playground } of playgroundBtns) {
+      const btn = document.getElementById(id);
+      if (btn) {
+        btn.addEventListener("click", () => {
+          playgroundBtns.forEach(({ id: oid }) => {
+            const ob = document.getElementById(oid);
+            if (ob) ob.classList.toggle("active", oid === id);
+          });
+          if (playground) {
+            switchToPlayground(playground);
+          } else {
+            switchToRealWorld();
+          }
+          btn.blur();
+        });
+      }
     }
   }
 
@@ -651,8 +785,10 @@ export function startSimulator(): void {
         requestWaterMask: false,
         requestVertexNormals: false,
       });
+      worldTerrainProvider = terrainProvider;
     } catch (error) {
       console.warn("Falling back to ellipsoid terrain provider:", error);
+      worldTerrainProvider = terrainProvider;
     }
 
     viewer = new Cesium.Viewer("cesiumContainer", {
@@ -874,12 +1010,12 @@ export function startSimulator(): void {
       viewer.scene.globe.show = currentCesiumFade > 0.01;
     }
 
-    // Apply visibility to 3D tile primitives
+    // Apply visibility to 3D tile primitives (hidden when in playground mode)
     if (googleTilesRef) {
-      googleTilesRef.show = currentCesiumFade > 0.01;
+      googleTilesRef.show = !activePlayground && currentCesiumFade > 0.01;
     }
     if (osmBuildingsRef) {
-      osmBuildingsRef.show = currentCesiumFade > 0.01;
+      osmBuildingsRef.show = !activePlayground && currentCesiumFade > 0.01;
     }
 
     // Disable Cesium fog & post-processing when terrain is hidden to ensure
@@ -897,6 +1033,20 @@ export function startSimulator(): void {
   function stepFrame(now: number): void {
     const dt = Math.min(0.033, Math.max(0.001, (now - lastTime) / 1000.0));
     lastTime = now;
+
+    flightMetrics.updatePosition(drone.position.x, drone.position.y, drone.position.z);
+    if (activePlayground?.waypoints?.length) {
+      flightMetrics.checkWaypointProximity(
+        drone.position.x,
+        drone.position.y,
+        drone.position.z,
+        activePlayground.waypoints,
+        (lon, lat, h) => {
+          const c = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+          return { x: c.x, y: c.y, z: c.z };
+        }
+      );
+    }
 
     applyOrientationInput(dt);
     updateHorizontalAxes();
@@ -964,6 +1114,7 @@ export function startSimulator(): void {
       fpvHudSpd = fpv.speed;
 
       resetPosition();
+      flightMetrics.reset();
       lastTime = performance.now();
 
       // Use requestAnimationFrame for tightest possible frame pacing —
