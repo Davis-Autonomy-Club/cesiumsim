@@ -40,13 +40,13 @@ export const BUILDING_COLLISION = {
   enabled: true,
   activationAltitudeAGL: 500,
   minimumClearance: 6.0,
-  forwardCheckDistance: 80,
+  forwardCheckDistance: 5,
   wallStopDistance: 5,
   deflectionStrength: 1,
-  pushbackDistance: 3.0,
+  pushbackDistance: 6.0,
   numRays: 5,
   reflectOnImpact: true,
-  slideAlongSurface: true,
+  slideAlongSurface: false,
   energyLoss: 0.3,
 };
 

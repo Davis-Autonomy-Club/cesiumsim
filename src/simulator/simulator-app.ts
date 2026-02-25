@@ -128,6 +128,7 @@ export function startSimulator(): void {
   const droneHpr = new Cesium.HeadingPitchRoll();
   const droneModelOrientation = new Cesium.Quaternion();
   let droneEntity: any = null;
+  let droneCollisionEntity: any = null;
 
   /* ─── Camera mode ─── */
   let cameraMode = CAMERA_CHASE;
@@ -366,6 +367,12 @@ export function startSimulator(): void {
     }
     const minHeight = drone.lastGroundHeight + FLIGHT.minimumClearance;
     if (scratch.cartographic.height < minHeight) {
+      console.log("[collision] drone vs terrain/ground", {
+        type: "terrain_clearance",
+        groundHeight: drone.lastGroundHeight,
+        minAllowedHeight: minHeight,
+        currentHeight: scratch.cartographic.height,
+      });
       flightMetrics.recordCollision();
       scratch.cartographic.height = minHeight;
       Cesium.Cartesian3.fromRadians(
@@ -413,9 +420,19 @@ export function startSimulator(): void {
       return;
     }
 
-    const excludeList = droneEntity ? [droneEntity] : [];
+    const excludeList = [];
+    if (droneEntity) {
+      excludeList.push(droneEntity);
+    }
+    if (droneCollisionEntity) {
+      excludeList.push(droneCollisionEntity);
+    }
 
-    if (hasSampleHeight) {
+    // In real-world mode we use sampleHeight to keep the drone above
+    // rooftops/tiles. In playgrounds we skip this so walls/obstacles
+    // behave more like hard blockers instead of "teleporting" the drone
+    // up to the roof height.
+    if (hasSampleHeight && !activePlayground) {
       const sceneHeight = scene.sampleHeight(
         scratch.buildingCartographic,
         excludeList,
@@ -423,6 +440,12 @@ export function startSimulator(): void {
       if (Number.isFinite(sceneHeight)) {
         const minHeight = sceneHeight + BUILDING_COLLISION.minimumClearance;
         if (scratch.buildingCartographic.height < minHeight) {
+          console.log("[collision] drone vs rooftop/tiles", {
+            type: "building_rooftop",
+            sceneHeight,
+            minAllowedHeight: minHeight,
+            currentHeight: scratch.buildingCartographic.height,
+          });
           flightMetrics.recordCollision();
           scratch.buildingCartographic.height = minHeight;
           Cesium.Cartesian3.fromRadians(
@@ -506,45 +529,30 @@ export function startSimulator(): void {
       const hitNormal = scratch.rayDir;
       Cesium.Cartesian3.negate(closestHit.rayDir, hitNormal);
 
-      if (BUILDING_COLLISION.reflectOnImpact ?? true) {
-        const vDotN = Cesium.Cartesian3.dot(drone.horizontalVelocity, hitNormal);
-        if (vDotN < 0) {
-          const loss = 1 - (BUILDING_COLLISION.energyLoss ?? 0.3);
-          Cesium.Cartesian3.multiplyByScalar(hitNormal, -2 * vDotN * loss, scratch.reflectStep);
-          Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.reflectStep, drone.horizontalVelocity);
-          if (BUILDING_COLLISION.slideAlongSurface) {
-            const vDotN2 = Cesium.Cartesian3.dot(drone.horizontalVelocity, hitNormal);
-            if (vDotN2 > 0) {
-              Cesium.Cartesian3.multiplyByScalar(hitNormal, vDotN2, scratch.reflectStep);
-              Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.reflectStep, drone.horizontalVelocity);
-            }
-          }
-        }
-      } else {
-        const t = 1.0 - distance / BUILDING_COLLISION.forwardCheckDistance;
-        const deflection = t * t * BUILDING_COLLISION.deflectionStrength;
-        Cesium.Cartesian3.multiplyByScalar(
-          drone.horizontalVelocity,
-          1.0 - deflection,
-          drone.horizontalVelocity,
-        );
+      // Hard stop: on forward obstacle hit, zero horizontal velocity so
+      // the drone becomes stationary instead of sliding through or along
+      // the wall. Vertical velocity is also clamped so you don't sink.
+      drone.horizontalVelocity.x = 0.0;
+      drone.horizontalVelocity.y = 0.0;
+      drone.horizontalVelocity.z = 0.0;
+      if (drone.verticalSpeed < 0.0) {
+        drone.verticalSpeed = 0.0;
       }
 
+      // Nudge the drone just outside the wall to avoid tiny residual
+      // penetration that can look like slow drift even when speed ~ 0.
       if (distance < BUILDING_COLLISION.wallStopDistance) {
-        Cesium.Cartesian3.multiplyByScalar(
-          hitNormal,
-          BUILDING_COLLISION.pushbackDistance,
-          scratch.velocityStep,
-        );
+        const correction = BUILDING_COLLISION.wallStopDistance - distance + 0.1;
+        Cesium.Cartesian3.multiplyByScalar(hitNormal, correction, scratch.velocityStep);
         Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
-
-        if (!BUILDING_COLLISION.reflectOnImpact) {
-          drone.horizontalVelocity.x = 0.0;
-          drone.horizontalVelocity.y = 0.0;
-          drone.horizontalVelocity.z = 0.0;
-          drone.verticalSpeed = 0.0;
-        }
       }
+
+      console.log("[collision] drone vs forward obstacle/wall", {
+        type: "building_wall",
+        distance,
+        forwardCheckDistance: BUILDING_COLLISION.forwardCheckDistance,
+        wallStopDistance: BUILDING_COLLISION.wallStopDistance,
+      });
     }
   }
 
@@ -775,6 +783,18 @@ export function startSimulator(): void {
           btn.blur();
         });
       }
+    }
+
+    const collisionToggle = document.getElementById(
+      "collision-box-toggle",
+    ) as HTMLInputElement | null;
+    if (collisionToggle) {
+      collisionToggle.checked = false;
+      collisionToggle.addEventListener("change", () => {
+        if (droneCollisionEntity) {
+          droneCollisionEntity.show = collisionToggle.checked;
+        }
+      });
     }
   }
 
@@ -1098,10 +1118,23 @@ export function startSimulator(): void {
         position: new Cesium.CallbackProperty(() => drone.position, false),
         orientation: new Cesium.CallbackProperty(() => droneModelOrientation, false),
         model: {
-          uri: '/assets/drone.glb',
+          uri: "/assets/drone.glb",
           minimumPixelSize: 64,
           scale: 1.0,
         },
+      });
+
+      // Collision volume visualization (toggleable via UI checkbox).
+      droneCollisionEntity = viewer.entities.add({
+        position: new Cesium.CallbackProperty(() => drone.position, false),
+        orientation: new Cesium.CallbackProperty(() => droneModelOrientation, false),
+        box: {
+          dimensions: new Cesium.Cartesian3(4.0, 4.0, 2.0),
+          material: Cesium.Color.RED.withAlpha(0.15),
+          outline: true,
+          outlineColor: Cesium.Color.RED,
+        },
+        show: false,
       });
 
       setupInputHandlers();
