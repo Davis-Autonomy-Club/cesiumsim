@@ -1,5 +1,13 @@
 import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM, setCloudsEnabled } from './geospatial-overlay.js';
 import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreativeMode, updateCreativeMode, getFreeCamReadout, setHighlightVisible } from './creative-mode/creative-mode.js';
+import {
+  DEV_CONFIG,
+  WindModel,
+  MODERATE,
+  computeForces,
+  hoverThrottle,
+  getAirDensity
+} from './flight-physics/index.js';
 
 (function main() {
   const DEFAULT_CESIUM_TOKEN =
@@ -37,7 +45,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     maxVisualRoll: Cesium.Math.toRadians(15.0),
     visualTiltRate: 5.0,
     visualTiltReturn: 6.0,
-    minimumClearance: 2.0,
+    minimumClearance: 0.5,
     cameraForwardOffset: -18.0,
     cameraUpOffset: 6.0,
     cameraLookAboveOffset: 6.0,
@@ -47,11 +55,11 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
   const BUILDING_COLLISION = {
     enabled: true,
     activationAltitudeAGL: 500,   // only check below this AGL altitude (meters)
-    minimumClearance: 6.0,         // min distance above building rooftops (meters)
-    forwardCheckDistance: 80,      // forward ray check distance (meters)
-    wallStopDistance: 5,          // full stop when wall is this close (meters)
-    deflectionStrength: 1,      // velocity kill factor at closest range (0-1)
-    pushbackDistance: 3.0,         // meters to push back from wall on hard collision
+    minimumClearance: 0.5,         // min distance above building rooftops (meters)
+    forwardCheckDistance: 20,      // forward ray check distance (meters)
+    wallStopDistance: 1.0,         // full stop when wall is this close (meters)
+    deflectionStrength: 1,         // velocity kill factor at closest range (0-1)
+    pushbackDistance: 0.5,         // meters to push back from wall on hard collision
   };
 
   const HUD = {
@@ -120,7 +128,15 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     visualRoll: 0.0,
     orientation: new Cesium.Quaternion(0, 0, 0, 1),
     lastGroundHeight: 0.0,
+    config: DEV_CONFIG,      // Switch to ATLAS_CONFIG for full-size drone
+    throttle: 0.5,           // Current throttle 0-1
+    airDensity: 1.225,       // Current air density (for HUD)
   };
+
+  // Wind model instance
+  const wind = new WindModel(MODERATE);
+  // Uncomment to test with wind:
+  // wind.setMeanWind(270, 8);  // 8 m/s from West
 
   const scratch = {
     hpr: new Cesium.HeadingPitchRoll(),
@@ -335,65 +351,107 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
   }
 
   function applyDroneMovement(dt) {
-    const sm = speedMultiplier;
 
-    // ── Horizontal channel: Up/Down arrows → forward/back, A/D → strafe ──
-    const moveInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
+    // ── INPUT → THROTTLE ──────────────────────────────────────────────────────
+    const vertInput = (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
+
+    // Get current altitude
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+    const altMSL = scratch.cartographic.height;
+
+    // Compute hover throttle at current altitude (auto-adjusts for air density)
+    const hoverThrot = hoverThrottle(drone.config, altMSL);
+
+    // Throttle = hover + input adjustment
+    const throttleAdjust = 0.15;
+    drone.throttle = Cesium.Math.clamp(hoverThrot + vertInput * throttleAdjust, 0.0, 1.0);
+
+    // ── WIND SAMPLING ─────────────────────────────────────────────────────────
+    // Use lon/lat scaled to meters for spatial coherence
+    const lonDeg = Cesium.Math.toDegrees(scratch.cartographic.longitude);
+    const latDeg = Cesium.Math.toDegrees(scratch.cartographic.latitude);
+    const windPosX = lonDeg * 111000;
+    const windPosY = latDeg * 111000;
+    const windENU = wind.sample(windPosX, windPosY, altMSL, dt);
+
+    // ── CURRENT VELOCITY → ENU ────────────────────────────────────────────────
+    const enuTransform = Cesium.Transforms.eastNorthUpToFixedFrame(
+      drone.position, Cesium.Ellipsoid.WGS84, scratch.transform
+    );
+    const ecefToEnu = Cesium.Matrix4.inverseTransformation(enuTransform, new Cesium.Matrix4());
+    const hVelENU = Cesium.Matrix4.multiplyByPointAsVector(
+      ecefToEnu, drone.horizontalVelocity, new Cesium.Cartesian3()
+    );
+
+    const velocityENU = {
+      x: hVelENU.x,
+      y: hVelENU.y,
+      z: drone.verticalSpeed,
+    };
+
+    // ── COMPUTE FORCES ────────────────────────────────────────────────────────
+    const forces = computeForces({
+      throttle: drone.throttle,
+      windENU,
+      velocityENU,
+      altMSL,
+      config: drone.config,
+    });
+
+    drone.airDensity = forces.rho;
+
+    // ── HORIZONTAL MOVEMENT (existing input logic) ────────────────────────────
+    const horizInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
     const strafeInput = (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
 
-    if (moveInput !== 0) {
+    if (horizInput !== 0) {
       Cesium.Cartesian3.multiplyByScalar(
         scratch.horizontalForward,
-        moveInput * FLIGHT.horizontalAcceleration * sm * dt,
-        scratch.velocityStep,
+        horizInput * FLIGHT.horizontalAcceleration * dt,
+        scratch.acceleration
       );
-      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.acceleration, drone.horizontalVelocity);
     }
 
     if (strafeInput !== 0) {
       Cesium.Cartesian3.multiplyByScalar(
         scratch.horizontalRight,
-        strafeInput * FLIGHT.horizontalAcceleration * sm * dt,
-        scratch.velocityStep,
+        strafeInput * FLIGHT.horizontalAcceleration * dt,
+        scratch.acceleration
       );
-      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.acceleration, drone.horizontalVelocity);
     }
 
-    // Horizontal drag (exponential)
-    const hDrag = Math.exp(-FLIGHT.horizontalDrag * dt);
-    Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, hDrag, drone.horizontalVelocity);
+    // Apply drag from physics model (ENU → ECEF)
+    const dragENU = new Cesium.Cartesian3(forces.dragAccelX * dt, forces.dragAccelY * dt, 0);
+    const dragECEF = Cesium.Matrix4.multiplyByPointAsVector(enuTransform, dragENU, new Cesium.Cartesian3());
+    Cesium.Cartesian3.add(drone.horizontalVelocity, dragECEF, drone.horizontalVelocity);
 
     // Clamp horizontal speed
-    const effectiveMaxH = FLIGHT.maxHorizontalSpeed * sm;
-    const hSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
-    if (hSpeed > effectiveMaxH) {
+    const horizSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
+    const maxHorizSpeed = FLIGHT.maxHorizontalSpeed;
+    if (horizSpeed > maxHorizSpeed) {
       Cesium.Cartesian3.multiplyByScalar(
         drone.horizontalVelocity,
-        effectiveMaxH / hSpeed,
-        drone.horizontalVelocity,
+        maxHorizSpeed / horizSpeed,
+        drone.horizontalVelocity
       );
     }
 
-    // ── Vertical channel: W/S → thrust along surface normal ──
-    const vertInput = (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
-
-    if (vertInput !== 0) {
-      drone.verticalSpeed += vertInput * FLIGHT.verticalAcceleration * sm * dt;
-    }
-
-    // Vertical drag (exponential)
-    drone.verticalSpeed *= Math.exp(-FLIGHT.verticalDrag * dt);
+    // ── VERTICAL MOVEMENT (thrust-based) ──────────────────────────────────────
+    // Net vertical: thrust + gravity + drag
+    drone.verticalSpeed += forces.netAccelZ * dt;
 
     // Clamp vertical speed
-    const effectiveMaxV = FLIGHT.maxVerticalSpeed * sm;
-    drone.verticalSpeed = Cesium.Math.clamp(drone.verticalSpeed, -effectiveMaxV, effectiveMaxV);
+    const maxVertSpeed = FLIGHT.maxVerticalSpeed;
+    drone.verticalSpeed = Cesium.Math.clamp(drone.verticalSpeed, -maxVertSpeed, maxVertSpeed);
 
-    // ── Combine into position update ──
-    // Horizontal movement
+    // ── POSITION INTEGRATION ──────────────────────────────────────────────────
+    // Horizontal
     Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, dt, scratch.movementStep);
     Cesium.Cartesian3.add(drone.position, scratch.movementStep, drone.position);
 
-    // Vertical movement along surface normal
+    // Vertical
     Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
     Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, drone.verticalSpeed * dt, scratch.verticalStep);
     Cesium.Cartesian3.add(drone.position, scratch.verticalStep, drone.position);
@@ -504,7 +562,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
      * fully stop and push the drone back. */
     if (hasPickFromRay) {
       const speed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
-      if (speed > 1.0) {
+      if (speed > 0.3) {
         // Forward ray
         const forwardRay = new Cesium.Ray(drone.position, scratch.forward);
         const forwardHit = scene.pickFromRay(forwardRay, excludeList);
@@ -653,6 +711,38 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
         HUD.buildingCol.style.color = '#44ff44';
       }
     }
+
+    // Air density and throttle display
+    const densityEl = document.getElementById('hud-density');
+    const throttleEl = document.getElementById('hud-throttle');
+    if (densityEl) densityEl.textContent = `${drone.airDensity.toFixed(3)} kg/m³`;
+    if (throttleEl) throttleEl.textContent = `${(drone.throttle * 100).toFixed(0)}%`;
+
+    // Throttle gauge bar
+    const tgFill = document.getElementById('tg-fill');
+    const tgHoverLine = document.getElementById('tg-hover-line');
+    const tgPercent = document.getElementById('tg-percent');
+    if (tgFill) {
+      const pct = Math.min(100, Math.max(0, drone.throttle * 100));
+      tgFill.style.height = pct + '%';
+      // Color: green → yellow → red
+      if (pct > 85) {
+        tgFill.style.background = 'linear-gradient(to top, #ff4444, #ffaa00)';
+      } else if (pct > 60) {
+        tgFill.style.background = 'linear-gradient(to top, #ffdd44, #82e3ff)';
+      } else {
+        tgFill.style.background = 'linear-gradient(to top, #44ff44, #82e3ff)';
+      }
+    }
+    if (tgHoverLine) {
+      // Show the auto-hover throttle level as a dashed line
+      Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+      const hoverPct = hoverThrottle(drone.config, scratch.cartographic.height) * 100;
+      tgHoverLine.style.bottom = Math.min(100, Math.max(0, hoverPct)) + '%';
+    }
+    if (tgPercent) {
+      tgPercent.textContent = `${(drone.throttle * 100).toFixed(0)}%`;
+    }
   }
 
   function resetPosition() {
@@ -670,6 +760,13 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     drone.heading = Cesium.Math.toRadians(200.0);
     drone.visualPitch = 0.0;
     drone.visualRoll = 0.0;
+
+    // Reset wind model state
+    wind.reset();
+
+    // Reset throttle to hover at new altitude
+    drone.throttle = hoverThrottle(drone.config, location.height);
+
     updateDroneOrientation();
     updateHorizontalAxes();
     updateWorldAxes();

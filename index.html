@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Widgets/widgets.css" />
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Cesium.js"></script>
-  <script type="module" src="/src/main.ts"></script>
+  <script type="module" src="./app.js"></script>
 </head>
 
 <body>
@@ -31,12 +31,21 @@
       <div id="hud-altitude-msl">0.0 m</div>
       <div>Bldg Collision</div>
       <div id="hud-building-col">OFF</div>
+      <div>Air Density</div>
+      <div id="hud-density">1.225 kg/m³</div>
+      <div>Throttle</div>
+      <div id="hud-throttle">50%</div>
     </div>
   </section>
 
-  <div id="gemini-overlay">
-    <div id="gemini-header">Gemini Autopilot</div>
-    <div id="gemini-text">Waiting for response...</div>
+  <!-- Throttle bar gauge -->
+  <div id="throttle-gauge">
+    <div class="tg-label">THR</div>
+    <div class="tg-track">
+      <div id="tg-hover-line" class="tg-hover-line"></div>
+      <div id="tg-fill" class="tg-fill"></div>
+    </div>
+    <div id="tg-percent" class="tg-percent">50%</div>
   </div>
 
   <section id="status-panel">
