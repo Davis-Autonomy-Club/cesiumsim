@@ -484,6 +484,51 @@ export function startSimulator(): void {
       }
     }
 
+    // Vertical rays: catches objects above and below the drone (ascending/descending).
+    // Works in both real-world and playground mode, regardless of horizontal speed.
+    if (hasPickFromRay) {
+      const minClearance = BUILDING_COLLISION.minimumClearance;
+
+      // Downward ray
+      const downDir = Cesium.Cartesian3.negate(scratch.surfaceNormal, new Cesium.Cartesian3());
+      const downHit = scene.pickFromRay(new Cesium.Ray(drone.position, downDir), excludeList);
+      if (downHit?.position) {
+        const distBelow = Cesium.Cartesian3.distance(drone.position, downHit.position);
+        if (distBelow < minClearance) {
+          const correction = minClearance - distBelow;
+          Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, correction, scratch.velocityStep);
+          Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
+          if (drone.verticalSpeed < 0.0) drone.verticalSpeed = 0.0;
+          const hDown = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
+          if (hDown < 0.0) {
+            Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, hDown, scratch.velocityStep);
+            Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+          }
+          flightMetrics.recordCollision();
+          console.log("[collision] drone vs object below", { distBelow, minClearance });
+        }
+      }
+
+      // Upward ray
+      const upHit = scene.pickFromRay(new Cesium.Ray(drone.position, scratch.surfaceNormal), excludeList);
+      if (upHit?.position) {
+        const distAbove = Cesium.Cartesian3.distance(drone.position, upHit.position);
+        if (distAbove < minClearance) {
+          const correction = minClearance - distAbove;
+          Cesium.Cartesian3.multiplyByScalar(downDir, correction, scratch.velocityStep);
+          Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
+          if (drone.verticalSpeed > 0.0) drone.verticalSpeed = 0.0;
+          const hUp = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
+          if (hUp > 0.0) {
+            Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, hUp, scratch.velocityStep);
+            Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+          }
+          flightMetrics.recordCollision();
+          console.log("[collision] drone vs object above", { distAbove, minClearance });
+        }
+      }
+    }
+
     if (hasPickFromRay) {
       const speed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
       if (speed <= 1.0) {
