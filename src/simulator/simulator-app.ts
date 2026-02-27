@@ -9,7 +9,6 @@ import {
   CAMERA_FPV,
   CHASE_FOV,
   DEFAULT_CESIUM_TOKEN,
-  DEFAULT_GOOGLE_MAPS_API_KEY,
   FLIGHT,
   FPV_FOV,
   FPV_PITCH_DOWN,
@@ -41,10 +40,6 @@ export function startSimulator(): void {
     query.get("cesiumToken") ||
     window.localStorage.getItem("cesiumToken") ||
     DEFAULT_CESIUM_TOKEN;
-  const configuredGoogleApiKey =
-    query.get("googleApiKey") ||
-    window.localStorage.getItem("googleApiKey") ||
-    DEFAULT_GOOGLE_MAPS_API_KEY;
 
   if (query.has("cesiumToken")) {
     const token = query.get("cesiumToken");
@@ -52,17 +47,8 @@ export function startSimulator(): void {
       window.localStorage.setItem("cesiumToken", token);
     }
   }
-  if (query.has("googleApiKey")) {
-    const apiKey = query.get("googleApiKey");
-    if (apiKey) {
-      window.localStorage.setItem("googleApiKey", apiKey);
-    }
-  }
 
   Cesium.Ion.defaultAccessToken = configuredCesiumToken;
-  if (configuredGoogleApiKey && Cesium.GoogleMaps) {
-    Cesium.GoogleMaps.defaultApiKey = configuredGoogleApiKey;
-  }
 
   const drone = {
     position: Cesium.Cartesian3.fromDegrees(
@@ -149,7 +135,7 @@ export function startSimulator(): void {
   let cloudFogOverlay: HTMLDivElement | null = null;
   let currentCloudImmersion = 0; // smoothed 0..1
   let currentCesiumFade = 1.0;   // smoothed terrain visibility (0=hidden, 1=visible)
-  let googleTilesRef: any = null;      // reference to 3D tileset primitive
+  let cesiumTilesRef: any = null;      // reference to 3D tileset primitive
   let osmBuildingsRef: any = null;     // reference to OSM buildings primitive
 
   /* ─── Speed multiplier ─── */
@@ -299,9 +285,22 @@ export function startSimulator(): void {
     const hDrag = Math.exp(-FLIGHT.horizontalDrag * dt);
     Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, hDrag, drone.horizontalVelocity);
 
+    // Active stabilization: stronger braking when pilot releases sticks
+    if (moveInput === 0 && strafeInput === 0) {
+      const stabDamping = Math.exp(-12.0 * dt);
+      Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, stabDamping, drone.horizontalVelocity);
+    }
+
+    // Velocity deadzone — snap to zero below threshold to prevent micro-drift
+    const hSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
+    if (hSpeed < 0.1) {
+      drone.horizontalVelocity.x = 0.0;
+      drone.horizontalVelocity.y = 0.0;
+      drone.horizontalVelocity.z = 0.0;
+    }
+
     // Clamp horizontal speed
     const effectiveMaxH = FLIGHT.maxHorizontalSpeed * sm;
-    const hSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
     if (hSpeed > effectiveMaxH) {
       Cesium.Cartesian3.multiplyByScalar(
         drone.horizontalVelocity,
@@ -319,6 +318,16 @@ export function startSimulator(): void {
 
     // Vertical drag (exponential)
     drone.verticalSpeed *= Math.exp(-FLIGHT.verticalDrag * dt);
+
+    // Active vertical stabilization when no W/S input
+    if (vertInput === 0) {
+      drone.verticalSpeed *= Math.exp(-10.0 * dt);
+    }
+
+    // Vertical deadzone
+    if (Math.abs(drone.verticalSpeed) < 0.05) {
+      drone.verticalSpeed = 0.0;
+    }
 
     // Clamp vertical speed
     const effectiveMaxV = FLIGHT.maxVerticalSpeed * sm;
@@ -726,61 +735,45 @@ export function startSimulator(): void {
 
   async function loadWorldDetailLayers() {
     let datasetStatus = "Cesium World Terrain";
-    let usedGooglePhotorealisticTiles = false;
+    let usedCesium3DTiles = false;
 
-    if (
-      configuredGoogleApiKey &&
-      Cesium.GoogleMaps &&
-      typeof Cesium.createGooglePhotorealistic3DTileset === "function"
-    ) {
-      try {
-        Cesium.GoogleMaps.defaultApiKey = configuredGoogleApiKey;
-        let googleTiles = null;
-        try {
-          googleTiles = await Cesium.createGooglePhotorealistic3DTileset({
-            onlyUsingWithGoogleGeocoder: true,
-          });
-        } catch (innerError) {
-          googleTiles = await Cesium.createGooglePhotorealistic3DTileset();
-          console.warn(
-            "Google tile policy option failed, loaded tileset with default options:",
-            innerError,
-          );
-        }
-        viewer.scene.primitives.add(googleTiles);
-        googleTilesRef = googleTiles;  // keep reference for cloud occlusion
+    // Load Google Photorealistic 3D Tiles via Cesium Ion (asset 2275207)
+    // Authenticated through the Cesium Ion token — no separate Google API key needed.
+    try {
+      const tiles = await Cesium.Cesium3DTileset.fromIonAssetId(2275207);
+      viewer.scene.primitives.add(tiles);
+      cesiumTilesRef = tiles;  // keep reference for cloud occlusion
 
-        // ── Flight-sim LOD: HD nearby, aggressively degrade distant tiles ──
-        googleTiles.maximumScreenSpaceError = 4;
-        // Dynamic SSE: increase error tolerance for tiles near the horizon
-        googleTiles.dynamicScreenSpaceError = true;
-        googleTiles.dynamicScreenSpaceErrorDensity = 2.46e-4;
-        googleTiles.dynamicScreenSpaceErrorFactor = 24.0;
-        googleTiles.dynamicScreenSpaceErrorHeightFalloff = 0.25;
-        // Foveated: prioritize center-of-screen tile loading
-        googleTiles.foveatedScreenSpaceError = true;
-        googleTiles.foveatedConeSize = 0.1;
-        googleTiles.foveatedMinimumScreenSpaceErrorRelaxation = 0.0;
-        googleTiles.foveatedTimeDelay = 0.2;
-        // Aggressively cull tile requests while camera is in motion
-        googleTiles.cullRequestsWhileMoving = true;
-        googleTiles.cullRequestsWhileMovingMultiplier = 60.0;
-        // Memory budget
-        googleTiles.cacheBytes = 512 * 1024 * 1024;
-        googleTiles.maximumCacheOverflowBytes = 256 * 1024 * 1024;
-        // Progressive: show low-res placeholders first, then refine
-        googleTiles.progressiveResolutionHeightFraction = 0.3;
-        googleTiles.preloadFlightDestinations = true;
-        googleTiles.preferLeaves = false;
+      // ── Flight-sim LOD: HD nearby, aggressively degrade distant tiles ──
+      tiles.maximumScreenSpaceError = 4;
+      // Dynamic SSE: increase error tolerance for tiles near the horizon
+      tiles.dynamicScreenSpaceError = true;
+      tiles.dynamicScreenSpaceErrorDensity = 2.46e-4;
+      tiles.dynamicScreenSpaceErrorFactor = 24.0;
+      tiles.dynamicScreenSpaceErrorHeightFalloff = 0.25;
+      // Foveated: prioritize center-of-screen tile loading
+      tiles.foveatedScreenSpaceError = true;
+      tiles.foveatedConeSize = 0.1;
+      tiles.foveatedMinimumScreenSpaceErrorRelaxation = 0.0;
+      tiles.foveatedTimeDelay = 0.2;
+      // Aggressively cull tile requests while camera is in motion
+      tiles.cullRequestsWhileMoving = true;
+      tiles.cullRequestsWhileMovingMultiplier = 60.0;
+      // Memory budget
+      tiles.cacheBytes = 512 * 1024 * 1024;
+      tiles.maximumCacheOverflowBytes = 256 * 1024 * 1024;
+      // Progressive: show low-res placeholders first, then refine
+      tiles.progressiveResolutionHeightFraction = 0.3;
+      tiles.preloadFlightDestinations = true;
+      tiles.preferLeaves = false;
 
-        datasetStatus = "Google Photorealistic 3D Tiles + Cesium lighting";
-        usedGooglePhotorealisticTiles = true;
-      } catch (error) {
-        console.warn("Google Photorealistic 3D Tiles failed to load:", error);
-      }
+      datasetStatus = "Google Photorealistic 3D Tiles (via Cesium Ion) + Cesium lighting";
+      usedCesium3DTiles = true;
+    } catch (error) {
+      console.warn("Cesium Ion 3D Tiles (asset 2275207) failed to load:", error);
     }
 
-    if (!usedGooglePhotorealisticTiles) {
+    if (!usedCesium3DTiles) {
       try {
         const osmBuildings = await Cesium.createOsmBuildingsAsync();
         viewer.scene.primitives.add(osmBuildings);
@@ -875,8 +868,8 @@ export function startSimulator(): void {
     }
 
     // Apply visibility to 3D tile primitives
-    if (googleTilesRef) {
-      googleTilesRef.show = currentCesiumFade > 0.01;
+    if (cesiumTilesRef) {
+      cesiumTilesRef.show = currentCesiumFade > 0.01;
     }
     if (osmBuildingsRef) {
       osmBuildingsRef.show = currentCesiumFade > 0.01;

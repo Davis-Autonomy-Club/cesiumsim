@@ -234,6 +234,112 @@ body {
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
 }
 
+/* ─── Incident overlay panel ─── */
+#incident-panel {
+  position: fixed;
+  z-index: 10;
+  bottom: 1rem;
+  right: 1rem;
+  width: min(21rem, calc(100vw - 2rem));
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--bg-panel-border);
+  background: linear-gradient(165deg, var(--bg-panel), rgba(8, 16, 26, 0.42));
+  box-shadow: var(--shadow);
+  padding: 0.75rem 1rem;
+}
+
+#incident-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: var(--accent);
+  user-select: none;
+}
+
+#incident-arrow {
+  font-size: 1.1rem;
+  transition: transform 0.2s ease;
+}
+
+#incident-body {
+  overflow: hidden;
+  max-height: 400px;
+  transition: max-height 0.3s ease, margin-top 0.3s ease;
+  margin-top: 0.5rem;
+}
+
+#incident-body.collapsed {
+  max-height: 0;
+  margin-top: 0;
+}
+
+#incident-info {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  line-height: 1.35;
+}
+
+#incident-info strong {
+  color: var(--text-main);
+}
+
+#incident-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.18rem 0;
+  font-family: "Space Mono", monospace;
+  font-size: 0.78rem;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.legend-line {
+  width: 20px;
+  height: 3px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.legend-label {
+  color: var(--text-main);
+}
+
+.legend-sub {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin-left: auto;
+}
+
+.incident-actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.incident-actions .speed-btn {
+  flex: 1;
+  padding: 0.32rem 0.5rem;
+}
+
 @media (max-width: 900px) {
   #hud {
     top: auto;

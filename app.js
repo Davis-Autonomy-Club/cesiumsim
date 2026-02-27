@@ -8,12 +8,17 @@ import {
   hoverThrottle,
   getAirDensity
 } from './flight-physics/index.js';
+import {
+  initIncidentOverlay,
+  buildIncidentLegend,
+  toggleIncidentOverlay,
+  AIRLINE_FIRE_LOCATION,
+} from './incident-overlay.js';
 
 (function main() {
   const DEFAULT_CESIUM_TOKEN =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmFjOWQwNy1lYTA5LTRmZWUtODNkOS1jYTAyNWM0OGVkMmMiLCJpZCI6Mzc3Mzg3LCJpYXQiOjE3NjgxNzAyNDN9.rAi0BHXk9BUPEfYxockPHQxu9qvCJ8ifJS0duz7HUl0";
-  const DEFAULT_GOOGLE_MAPS_API_KEY =
-    "AIzaSyDZoPrWVs0BJHxIYSA0-ijn15jN9P1y2M4";
+
 
   const START_LOCATION = {
     longitude: -122.3933,
@@ -98,22 +103,12 @@ import {
     query.get("cesiumToken") ||
     window.localStorage.getItem("cesiumToken") ||
     DEFAULT_CESIUM_TOKEN;
-  const configuredGoogleApiKey =
-    query.get("googleApiKey") ||
-    window.localStorage.getItem("googleApiKey") ||
-    DEFAULT_GOOGLE_MAPS_API_KEY;
 
   if (query.has("cesiumToken")) {
     window.localStorage.setItem("cesiumToken", query.get("cesiumToken"));
   }
-  if (query.has("googleApiKey")) {
-    window.localStorage.setItem("googleApiKey", query.get("googleApiKey"));
-  }
 
   Cesium.Ion.defaultAccessToken = configuredCesiumToken;
-  if (configuredGoogleApiKey && Cesium.GoogleMaps) {
-    Cesium.GoogleMaps.defaultApiKey = configuredGoogleApiKey;
-  }
 
   const drone = {
     position: Cesium.Cartesian3.fromDegrees(
@@ -219,7 +214,7 @@ import {
   let cloudFogOverlay = null;
   let currentCloudImmersion = 0; // smoothed 0..1
   let currentCesiumFade = 1.0;   // smoothed terrain visibility (0=hidden, 1=visible)
-  let googleTilesRef = null;      // reference to 3D tileset primitive
+  let cesiumTilesRef = null;      // reference to 3D tileset primitive
   let osmBuildingsRef = null;     // reference to OSM buildings primitive
 
   /* ─── Speed multiplier (fixed 50x) ─── */
@@ -427,8 +422,24 @@ import {
     const dragECEF = Cesium.Matrix4.multiplyByPointAsVector(enuTransform, dragENU, new Cesium.Cartesian3());
     Cesium.Cartesian3.add(drone.horizontalVelocity, dragECEF, drone.horizontalVelocity);
 
-    // Clamp horizontal speed
+    // ── ACTIVE STABILIZATION (flight-controller position-hold) ────────────────
+    // When the pilot releases the sticks, a real FC actively brakes to hold position.
+    // Aerodynamic drag alone (½ρV²CdA) approaches zero at low speed, causing infinite drift.
+    // This exponential damping simulates electronic braking / active stabilization.
+    if (horizInput === 0 && strafeInput === 0) {
+      const stabDamping = Math.exp(-12.0 * dt);  // strong braking when no input
+      Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, stabDamping, drone.horizontalVelocity);
+    }
+
+    // Velocity deadzone — snap to zero below threshold to prevent micro-drift
     const horizSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
+    if (horizSpeed < 0.1) {
+      drone.horizontalVelocity.x = 0.0;
+      drone.horizontalVelocity.y = 0.0;
+      drone.horizontalVelocity.z = 0.0;
+    }
+
+    // Clamp horizontal speed
     const maxHorizSpeed = FLIGHT.maxHorizontalSpeed;
     if (horizSpeed > maxHorizSpeed) {
       Cesium.Cartesian3.multiplyByScalar(
@@ -441,6 +452,16 @@ import {
     // ── VERTICAL MOVEMENT (thrust-based) ──────────────────────────────────────
     // Net vertical: thrust + gravity + drag
     drone.verticalSpeed += forces.netAccelZ * dt;
+
+    // Active vertical stabilization when no W/S input
+    if (vertInput === 0) {
+      drone.verticalSpeed *= Math.exp(-10.0 * dt);
+    }
+
+    // Vertical deadzone
+    if (Math.abs(drone.verticalSpeed) < 0.05) {
+      drone.verticalSpeed = 0.0;
+    }
 
     // Clamp vertical speed
     const maxVertSpeed = FLIGHT.maxVerticalSpeed;
@@ -830,6 +851,16 @@ import {
       });
     }
 
+    const airlineBtn = document.getElementById("teleport-airline");
+    if (airlineBtn) {
+      airlineBtn.addEventListener("click", () => {
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
+        teleportTo(AIRLINE_FIRE_LOCATION);
+        setFlightStatus("Teleported to Airline Fire incident area (July 2024).", false);
+        airlineBtn.blur();
+      });
+    }
+
     const cloudBtn = document.getElementById("cloud-toggle-btn");
     if (cloudBtn) {
       cloudBtn.addEventListener("click", () => {
@@ -838,6 +869,27 @@ import {
         cloudBtn.textContent = cloudsOn ? "ON" : "OFF";
         cloudBtn.classList.toggle("active", cloudsOn);
         cloudBtn.blur();
+      });
+    }
+
+    /* ─── Incident overlay panel buttons ─── */
+    const incidentToggleBtn = document.getElementById("incident-toggle-btn");
+    if (incidentToggleBtn) {
+      incidentToggleBtn.addEventListener("click", () => {
+        const vis = toggleIncidentOverlay();
+        incidentToggleBtn.textContent = vis ? "HIDE" : "SHOW";
+        incidentToggleBtn.classList.toggle("active", vis);
+        incidentToggleBtn.blur();
+      });
+    }
+
+    const incidentTeleportBtn = document.getElementById("incident-teleport-btn");
+    if (incidentTeleportBtn) {
+      incidentTeleportBtn.addEventListener("click", () => {
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
+        teleportTo(AIRLINE_FIRE_LOCATION);
+        setFlightStatus("Teleported to Airline Fire incident area (July 2024).", false);
+        incidentTeleportBtn.blur();
       });
     }
   }
@@ -924,61 +976,45 @@ import {
 
   async function loadWorldDetailLayers() {
     let datasetStatus = "Cesium World Terrain";
-    let usedGooglePhotorealisticTiles = false;
+    let usedCesium3DTiles = false;
 
-    if (
-      configuredGoogleApiKey &&
-      Cesium.GoogleMaps &&
-      typeof Cesium.createGooglePhotorealistic3DTileset === "function"
-    ) {
-      try {
-        Cesium.GoogleMaps.defaultApiKey = configuredGoogleApiKey;
-        let googleTiles = null;
-        try {
-          googleTiles = await Cesium.createGooglePhotorealistic3DTileset({
-            onlyUsingWithGoogleGeocoder: true,
-          });
-        } catch (innerError) {
-          googleTiles = await Cesium.createGooglePhotorealistic3DTileset();
-          console.warn(
-            "Google tile policy option failed, loaded tileset with default options:",
-            innerError,
-          );
-        }
-        viewer.scene.primitives.add(googleTiles);
-        googleTilesRef = googleTiles;  // keep reference for cloud occlusion
+    // Load Google Photorealistic 3D Tiles via Cesium Ion (asset 2275207)
+    // Authenticated through the Cesium Ion token — no separate Google API key needed.
+    try {
+      const tiles = await Cesium.Cesium3DTileset.fromIonAssetId(2275207);
+      viewer.scene.primitives.add(tiles);
+      cesiumTilesRef = tiles;  // keep reference for cloud occlusion
 
-        // ── Flight-sim LOD: HD nearby, aggressively degrade distant tiles ──
-        googleTiles.maximumScreenSpaceError = 4;
-        // Dynamic SSE: increase error tolerance for tiles near the horizon
-        googleTiles.dynamicScreenSpaceError = true;
-        googleTiles.dynamicScreenSpaceErrorDensity = 2.46e-4;
-        googleTiles.dynamicScreenSpaceErrorFactor = 24.0;
-        googleTiles.dynamicScreenSpaceErrorHeightFalloff = 0.25;
-        // Foveated: prioritize center-of-screen tile loading
-        googleTiles.foveatedScreenSpaceError = true;
-        googleTiles.foveatedConeSize = 0.1;
-        googleTiles.foveatedMinimumScreenSpaceErrorRelaxation = 0.0;
-        googleTiles.foveatedTimeDelay = 0.2;
-        // Aggressively cull tile requests while camera is in motion
-        googleTiles.cullRequestsWhileMoving = true;
-        googleTiles.cullRequestsWhileMovingMultiplier = 60.0;
-        // Memory budget
-        googleTiles.cacheBytes = 512 * 1024 * 1024;
-        googleTiles.maximumCacheOverflowBytes = 256 * 1024 * 1024;
-        // Progressive: show low-res placeholders first, then refine
-        googleTiles.progressiveResolutionHeightFraction = 0.3;
-        googleTiles.preloadFlightDestinations = true;
-        googleTiles.preferLeaves = false;
+      // ── Flight-sim LOD: HD nearby, aggressively degrade distant tiles ──
+      tiles.maximumScreenSpaceError = 4;
+      // Dynamic SSE: increase error tolerance for tiles near the horizon
+      tiles.dynamicScreenSpaceError = true;
+      tiles.dynamicScreenSpaceErrorDensity = 2.46e-4;
+      tiles.dynamicScreenSpaceErrorFactor = 24.0;
+      tiles.dynamicScreenSpaceErrorHeightFalloff = 0.25;
+      // Foveated: prioritize center-of-screen tile loading
+      tiles.foveatedScreenSpaceError = true;
+      tiles.foveatedConeSize = 0.1;
+      tiles.foveatedMinimumScreenSpaceErrorRelaxation = 0.0;
+      tiles.foveatedTimeDelay = 0.2;
+      // Aggressively cull tile requests while camera is in motion
+      tiles.cullRequestsWhileMoving = true;
+      tiles.cullRequestsWhileMovingMultiplier = 60.0;
+      // Memory budget
+      tiles.cacheBytes = 512 * 1024 * 1024;
+      tiles.maximumCacheOverflowBytes = 256 * 1024 * 1024;
+      // Progressive: show low-res placeholders first, then refine
+      tiles.progressiveResolutionHeightFraction = 0.3;
+      tiles.preloadFlightDestinations = true;
+      tiles.preferLeaves = false;
 
-        datasetStatus = "Google Photorealistic 3D Tiles + Cesium lighting";
-        usedGooglePhotorealisticTiles = true;
-      } catch (error) {
-        console.warn("Google Photorealistic 3D Tiles failed to load:", error);
-      }
+      datasetStatus = "Google Photorealistic 3D Tiles (via Cesium Ion) + Cesium lighting";
+      usedCesium3DTiles = true;
+    } catch (error) {
+      console.warn("Cesium Ion 3D Tiles (asset 2275207) failed to load:", error);
     }
 
-    if (!usedGooglePhotorealisticTiles) {
+    if (!usedCesium3DTiles) {
       try {
         const osmBuildings = await Cesium.createOsmBuildingsAsync();
         viewer.scene.primitives.add(osmBuildings);
@@ -1138,7 +1174,7 @@ import {
       currentCloudImmersion = 0;
       currentCesiumFade = 1;
       if (viewer.scene.globe) viewer.scene.globe.show = true;
-      if (googleTilesRef) googleTilesRef.show = true;
+      if (cesiumTilesRef) cesiumTilesRef.show = true;
       if (osmBuildingsRef) osmBuildingsRef.show = true;
       viewer.scene.fog.enabled = true;
       viewer.scene.fog.density = 0.0003;
@@ -1194,8 +1230,8 @@ import {
     }
 
     // Apply visibility to 3D tile primitives
-    if (googleTilesRef) {
-      googleTilesRef.show = currentCesiumFade > 0.01;
+    if (cesiumTilesRef) {
+      cesiumTilesRef.show = currentCesiumFade > 0.01;
     }
     if (osmBuildingsRef) {
       osmBuildingsRef.show = currentCesiumFade > 0.01;
@@ -1366,57 +1402,17 @@ import {
 
       console.log('[firePerimeters] Loaded BEU region:', beuFeature.properties.UNIT);
 
-      // Build coordinate array from the polygon's outer ring
+      // Build coordinate array from the polygon's outer ring (for minimap only)
       const ring = beuFeature.geometry.coordinates[0];
-      const degreesFlat = [];
       minimapPerimCoords = [];
       for (const [lon, lat] of ring) {
-        degreesFlat.push(lon, lat);
         minimapPerimCoords.push({ lon, lat });
       }
 
-      // Flat ground-clamped polygon — no extrusion so it cannot interfere
-      // with sampleHeight() or pickFromRay() at any altitude.
-      const perimGeometry = new Cesium.GeometryInstance({
-        geometry: new Cesium.PolygonGeometry({
-          polygonHierarchy: new Cesium.PolygonHierarchy(
-            Cesium.Cartesian3.fromDegreesArray(degreesFlat),
-          ),
-          vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
-        }),
-        attributes: {
-          color: Cesium.ColorGeometryInstanceAttribute.fromColor(
-            Cesium.Color.RED.withAlpha(0.25),
-          ),
-        },
-      });
+      // No 3D overlay is added to the Cesium globe — the perimeter is shown
+      // only on the 2D minimap canvas to avoid obscuring terrain / 3D tiles.
 
-      viewer.scene.primitives.add(new Cesium.GroundPrimitive({
-        geometryInstances: perimGeometry,
-        allowPicking: false,
-      }));
-
-      // Add a floating label at the center of the region
-      const centerLon = -121.0965;
-      const centerLat = 36.3890;
-      viewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 500),
-        label: {
-          text: 'BEU — San Benito-Monterey Fire Perimeter',
-          font: 'bold 18px sans-serif',
-          fillColor: Cesium.Color.WHITE,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 3,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          scaleByDistance: new Cesium.NearFarScalar(1000, 1.4, 200000, 0.3),
-        },
-        show: true,
-      });
-
-      console.log('[firePerimeters] BEU perimeter overlay rendered.');
+      console.log('[firePerimeters] BEU perimeter loaded for minimap (' + minimapPerimCoords.length + ' points).');
     } catch (err) {
       console.error('[firePerimeters] Failed to load fire perimeters:', err);
     }
@@ -1449,6 +1445,10 @@ import {
 
       // Load the fire perimeter overlay (non-blocking)
       loadFirePerimeters();
+
+      // Initialize incident overlay (beacons, route, labels)
+      initIncidentOverlay(viewer);
+      buildIncidentLegend();
 
       // Initialize mini-map canvas
       minimapCanvas = document.getElementById('minimap');
