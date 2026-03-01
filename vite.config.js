@@ -8,6 +8,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    rollupOptions: {
+      input: {
+        simulator: 'index.html',
+        training: 'training.html',
+      },
+    },
   },
   // Cesium is loaded from CDN, not bundled
   optimizeDeps: {

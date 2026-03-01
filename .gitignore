@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .vite/
+security/wyze-bridge/.env
+security/wyze-bridge/config/*
+!security/wyze-bridge/config/.gitkeep

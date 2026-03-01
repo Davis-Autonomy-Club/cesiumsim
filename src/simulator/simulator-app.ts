@@ -86,6 +86,15 @@ export function startSimulator(): void {
   };
 
   const keyState = new Set<string>();
+
+  /**
+   * Continuous action array for RL control.
+   * When non-null, overrides keyboard input in applyOrientationInput/applyDroneMovement.
+   * Format: [forward/back, strafe L/R, ascend/descend, yaw L/R] each in [-1, 1]
+   * Set via setContinuousAction() / clearContinuousAction().
+   */
+  let rlAction: number[] | null = null;
+
   let viewer: any = null;
   let lastTime = performance.now();
 
@@ -226,28 +235,31 @@ export function startSimulator(): void {
   }
 
   function applyOrientationInput(dt) {
-    // Left/Right arrows: pure yaw (heading rotation only, no visual effect)
-    const turnInput = (isDown("ArrowRight") ? 1 : 0) - (isDown("ArrowLeft") ? 1 : 0);
+    // Resolve inputs: use continuous RL action if set, otherwise keyboard
+    const turnInput = rlAction
+      ? rlAction[3]
+      : (isDown("ArrowRight") ? 1 : 0) - (isDown("ArrowLeft") ? 1 : 0);
     drone.heading += turnInput * FLIGHT.yawRate * dt;
     drone.heading = Cesium.Math.zeroToTwoPi(drone.heading);
 
-    // Up/Down arrows: forward/backward movement input (drives visual pitch)
-    const moveInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
+    const moveInput = rlAction
+      ? rlAction[0]
+      : (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
+    const strafeInput = rlAction
+      ? rlAction[1]
+      : (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
 
-    // A/D keys: lateral strafe input (drives visual roll)
-    const strafeInput = (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
-
-    // Target visual pitch: forward (ArrowUp) → nose down (negative pitch)
+    // Target visual pitch: forward → nose down (negative pitch)
     const targetPitch = -moveInput * FLIGHT.maxVisualPitch;
-    // Target visual roll: strafe right (D) → tilt right (positive roll)
+    // Target visual roll: strafe right → tilt right (positive roll)
     const targetRoll = strafeInput * FLIGHT.maxVisualRoll;
 
     // Exponential lerp toward targets
     const tiltAlpha = 1.0 - Math.exp(-FLIGHT.visualTiltRate * dt);
     const returnAlpha = 1.0 - Math.exp(-FLIGHT.visualTiltReturn * dt);
 
-    const pitchAlpha = moveInput !== 0 ? tiltAlpha : returnAlpha;
-    const rollAlpha = strafeInput !== 0 ? tiltAlpha : returnAlpha;
+    const pitchAlpha = Math.abs(moveInput) > 0.05 ? tiltAlpha : returnAlpha;
+    const rollAlpha = Math.abs(strafeInput) > 0.05 ? tiltAlpha : returnAlpha;
 
     drone.visualPitch = Cesium.Math.lerp(drone.visualPitch, targetPitch, pitchAlpha);
     drone.visualRoll = Cesium.Math.lerp(drone.visualRoll, targetRoll, rollAlpha);
@@ -259,11 +271,19 @@ export function startSimulator(): void {
   function applyDroneMovement(dt) {
     const sm = speedMultiplier;
 
-    // ── Horizontal channel: Up/Down arrows → forward/back, A/D → strafe ──
-    const moveInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
-    const strafeInput = (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
+    // ── Horizontal channel: RL continuous action or keyboard binary ──
+    const moveInput = rlAction
+      ? rlAction[0]
+      : (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
+    const strafeInput = rlAction
+      ? rlAction[1]
+      : (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
 
-    if (moveInput !== 0) {
+    // Deadzone for continuous input (RL actions can be very small)
+    const moveActive = Math.abs(moveInput) > 0.05;
+    const strafeActive = Math.abs(strafeInput) > 0.05;
+
+    if (moveActive) {
       Cesium.Cartesian3.multiplyByScalar(
         scratch.horizontalForward,
         moveInput * FLIGHT.horizontalAcceleration * sm * dt,
@@ -272,7 +292,7 @@ export function startSimulator(): void {
       Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
     }
 
-    if (strafeInput !== 0) {
+    if (strafeActive) {
       Cesium.Cartesian3.multiplyByScalar(
         scratch.horizontalRight,
         strafeInput * FLIGHT.horizontalAcceleration * sm * dt,
@@ -286,7 +306,7 @@ export function startSimulator(): void {
     Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, hDrag, drone.horizontalVelocity);
 
     // Active stabilization: stronger braking when pilot releases sticks
-    if (moveInput === 0 && strafeInput === 0) {
+    if (!moveActive && !strafeActive) {
       const stabDamping = Math.exp(-12.0 * dt);
       Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, stabDamping, drone.horizontalVelocity);
     }
@@ -309,18 +329,21 @@ export function startSimulator(): void {
       );
     }
 
-    // ── Vertical channel: W/S → thrust along surface normal ──
-    const vertInput = (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
+    // ── Vertical channel: RL continuous action or W/S keyboard ──
+    const vertInput = rlAction
+      ? rlAction[2]
+      : (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
+    const vertActive = Math.abs(vertInput) > 0.05;
 
-    if (vertInput !== 0) {
+    if (vertActive) {
       drone.verticalSpeed += vertInput * FLIGHT.verticalAcceleration * sm * dt;
     }
 
     // Vertical drag (exponential)
     drone.verticalSpeed *= Math.exp(-FLIGHT.verticalDrag * dt);
 
-    // Active vertical stabilization when no W/S input
-    if (vertInput === 0) {
+    // Active vertical stabilization when no input
+    if (!vertActive) {
       drone.verticalSpeed *= Math.exp(-10.0 * dt);
     }
 
@@ -652,6 +675,26 @@ export function startSimulator(): void {
       });
     }
   }
+
+  // ── RL Continuous Action API ──
+  // Exposed on window for external RL agents to control the drone
+
+  /**
+   * Set a continuous action array to override keyboard input.
+   * @param action [forward/back, strafe L/R, ascend/descend, yaw L/R] each [-1, 1]
+   */
+  function setContinuousAction(action: number[]) {
+    rlAction = action.map(v => Math.max(-1, Math.min(1, v)));
+  }
+
+  /** Clear the continuous action, reverting to keyboard control. */
+  function clearContinuousAction() {
+    rlAction = null;
+  }
+
+  // Expose on window for external access
+  (window as any).setContinuousAction = setContinuousAction;
+  (window as any).clearContinuousAction = clearContinuousAction;
 
   async function buildViewer() {
     let terrainProvider = new Cesium.EllipsoidTerrainProvider();
