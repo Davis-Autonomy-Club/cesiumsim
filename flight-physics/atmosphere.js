@@ -1,12 +1,16 @@
-// ISA (International Standard Atmosphere) model
-// ERD Section 3.2: ρ = P / (R·T)
+// ### What this file does
+// Models how air gets thinner at higher altitudes.
+// Thinner air means less lift from propellers, so the drone needs more throttle to hover.
+// Uses the International Standard Atmosphere (ISA) model — the same one used in real aviation.
 
+// ### Physical constants
 const R = 287.058;   // J/(kg·K) — specific gas constant for dry air
 const G = 9.80665;   // m/s²
 const T0 = 288.15;   // K — sea level standard temperature (15°C)
 const P0 = 101325;   // Pa — sea level standard pressure
 const L = 0.0065;    // K/m — temperature lapse rate (troposphere)
 
+// ### Calculate air pressure, temperature, and density at a given altitude
 /**
  * Get atmosphere properties at altitude using ISA model
  * Valid for troposphere (0 - 11,000m)
@@ -29,6 +33,7 @@ export function getAtmosphere(altMSL) {
   return { rho, pressure: P, temperature: T };
 }
 
+// ### Shortcut to get just the air density number
 /**
  * Get air density at altitude
  * @param {number} altMSL - Altitude MSL in meters

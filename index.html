@@ -26,11 +26,13 @@
       <div>Speed</div>
       <div id="hud-speed">0.0 km/h</div>
       <div>Altitude (AGL)</div>
-      <div id="hud-altitude-agl">0.0 m</div>
+      <div id="hud-altitude-agl">0 ft</div>
       <div>Altitude (MSL)</div>
-      <div id="hud-altitude-msl">0.0 m</div>
+      <div id="hud-altitude-msl">0 ft</div>
       <div>Bldg Collision</div>
       <div id="hud-building-col">OFF</div>
+      <div>AGL Ceiling</div>
+      <div id="hud-agl-ceiling">ON</div>
       <div>Air Density</div>
       <div id="hud-density">1.225 kg/m³</div>
       <div>Throttle</div>
@@ -63,6 +65,11 @@
       style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
       <span class="speed-tier-label">Clouds</span>
       <button id="cloud-toggle-btn" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">OFF</button>
+    </div>
+    <div id="agl-ceiling-bar"
+      style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
+      <span class="speed-tier-label">400ft Grid</span>
+      <button id="agl-ceiling-btn" class="speed-btn active" type="button" style="padding: 0.32rem 0.5rem;">ON</button>
     </div>
     <div class="controls">
       <div class="controls-title">Controls</div>

@@ -1,11 +1,14 @@
-// Force calculations for X8 coaxial drone
-// Based on ERD Section 3.1-3.3 equations
+// ### What this file does
+// Calculates all the physical forces acting on the drone each frame:
+// thrust (propellers pushing up), drag (air resistance slowing it down),
+// and gravity (pulling it down). These determine how the drone accelerates.
 
 import { getAirDensity } from './atmosphere.js';
 import { getTotalMass } from './drone-config.js';
 
 const G = 9.80665; // m/s²
 
+// ### Thrust — how much upward force the propellers produce at a given throttle
 /**
  * Calculate X8 coaxial thrust
  * ERD Equation: T = C_T · ρ · n² · D⁴
@@ -37,6 +40,7 @@ export function calculateThrust(throttle, config, altMSL) {
   return numPairs * Tpair;
 }
 
+// ### Hover throttle — finds the exact throttle setting to stay perfectly still in the air
 /**
  * Calculate throttle needed for hover at given conditions
  * Uses binary search since thrust is nonlinear in throttle
@@ -62,6 +66,7 @@ export function hoverThrottle(config, altMSL, thrustMargin = 1.0) {
   return (lo + hi) / 2;
 }
 
+// ### Drag — air resistance that slows the drone down when it moves
 /**
  * Calculate aerodynamic drag force magnitude
  * ERD Equation: D = ½ρV²·Cd·A
@@ -85,6 +90,7 @@ export function calculateDragMagnitude(speedRel, config, altMSL, verticalFractio
   return 0.5 * rho * speedRel * speedRel * Cd * effectiveArea;
 }
 
+// ### Main force calculator — combines thrust, drag, and gravity into net acceleration
 /**
  * Compute all forces and return acceleration components
  * Main entry point called from app.js each frame
@@ -163,6 +169,7 @@ export function computeForces(params) {
   };
 }
 
+// ### Hover check — can the drone stay airborne at this altitude with this payload?
 /**
  * Check if drone can maintain hover at given conditions
  * @param {object} config - Drone configuration

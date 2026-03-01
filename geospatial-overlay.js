@@ -1,13 +1,7 @@
-/**
- * Geospatial Rendering Overlay
- * 
- * Adds a synchronized Three.js rendering layer on top of the Cesium viewer
- * using @takram/three-atmosphere for physically-based atmospheric scattering,
- * @takram/three-clouds for volumetric clouds, aerial perspective, sky rendering,
- * sun/moon lighting, and post-processing.
- * 
- * The Three.js camera is kept in lock-step with the Cesium camera every frame.
- */
+// ### What this file does
+// Adds realistic sky, clouds, stars, and atmospheric haze on top of the Cesium 3D globe.
+// Uses a second rendering engine (Three.js) layered over Cesium. Both cameras stay
+// perfectly synchronized so the clouds and atmosphere align with the terrain below.
 
 import {
     Scene,
@@ -74,7 +68,7 @@ import {
 } from '@takram/three-clouds';
 
 
-/* ─── Cloud Layer Altitude Constants (meters above sea level) ─── */
+// ### Cloud altitude boundaries — defines where clouds start and end in the sky
 // Based on CloudLayers.DEFAULT from @takram/three-clouds:
 //   Layer 0 (cumulus):        altitude=750,  height=650   → 750..1400m
 //   Layer 1 (stratocumulus):  altitude=1000, height=1200  → 1000..2200m
@@ -85,6 +79,7 @@ export const CLOUD_BAND_TOP = 2200;  // meters MSL
 export const CLOUD_BAND_CORE_BOTTOM = 900;  // dense core start
 export const CLOUD_BAND_CORE_TOP = 1800; // dense core end
 
+// ### Detect whether the drone is below, entering, inside, exiting, or above the clouds
 /**
  * Compute the camera's relationship with the cloud layer.
  * @param {number} altitudeMSL  Camera altitude in meters above sea level.
@@ -112,7 +107,7 @@ export function getCloudImmersionState(altitudeMSL) {
 }
 
 
-/* ─── Asset URLs for cloud textures ─── */
+// ### Cloud texture file paths — image data that makes the clouds look realistic
 // Served locally from public/assets/clouds/ (copied from the npm package).
 // This avoids unreliable GitHub LFS CDN requests that can silently hang.
 const LOCAL_WEATHER_URL = '/assets/clouds/local_weather.png';
@@ -124,7 +119,7 @@ const CLOUD_SHAPE_SIZE = 128;
 const CLOUD_SHAPE_DETAIL_SIZE = 32;
 
 
-/* ─── State ─── */
+// ### Internal state — Three.js rendering objects and scratch variables
 let scene, camera, renderer, composer;
 let skyMaterial, skyLight, sunLight, aerialPerspective;
 let starsMaterial, starsPoints;
@@ -146,7 +141,7 @@ const _right = new Vector3();
 const _mat4 = new Matrix4();
 
 
-/* ─── Texture Loading Helpers ─── */
+// ### Texture loaders — load image files from disk into GPU memory for cloud rendering
 
 function loadTexture2D(url) {
     return new Promise((resolve, reject) => {
@@ -197,8 +192,7 @@ function loadSTBN(url) {
 }
 
 
-/* ─── Public API ───────────────────────────────────────────────── */
-
+// ### Public controls — turn clouds on/off
 /**
  * Toggle volumetric cloud rendering on or off.
  * Sky, atmosphere, and stars remain unaffected.
@@ -209,6 +203,7 @@ export function setCloudsEnabled(enabled) {
     }
 }
 
+// ### Setup — creates the entire sky/cloud/star rendering system on top of Cesium
 /**
  * Initialize the geospatial overlay on top of an existing Cesium viewer.
  * @param {Cesium.Viewer} viewer  The active Cesium Viewer instance.
@@ -375,6 +370,7 @@ export async function initGeospatialOverlay(viewer) {
     console.log('[geospatial-overlay] Atmospheric rendering with volumetric clouds and stars initialized.');
 }
 
+// ### Load cloud textures in the background after setup finishes
 /**
  * Load all required cloud textures asynchronously.
  */
@@ -412,6 +408,7 @@ async function loadCloudTextures() {
 }
 
 
+// ### Load the star catalog and put stars in the night sky
 /**
  * Load star catalog data and create the star points mesh.
  */
@@ -431,6 +428,7 @@ async function loadStarsData() {
 }
 
 
+// ### Per-frame render — syncs camera, updates sun/moon/star positions, draws everything
 /**
  * Call once per Cesium tick to synchronize and render the overlay.
  * @param {Cesium.Viewer} viewer
@@ -480,6 +478,7 @@ export function updateGeospatialOverlay(viewer) {
 }
 
 
+// ### Cleanup — free GPU memory when the overlay is no longer needed
 /**
  * Clean up resources.
  */
@@ -495,7 +494,7 @@ export function disposeGeospatialOverlay() {
 }
 
 
-/* ─── Internal helpers ─────────────────────────────────────────── */
+// ### Camera sync — copies Cesium's camera position and direction into Three.js every frame
 
 function syncCameraToCesium(viewer) {
     const cesiumCamera = viewer.camera;

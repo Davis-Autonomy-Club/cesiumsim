@@ -1,12 +1,9 @@
-/**
- * incident-overlay.js
- * Airline Fire (July 2024) incident overlay.
- *
- * Renders vertical beacon beams at staging sites, landing zones, and fire origin
- * on the Cesium globe, plus a connecting delivery-route polyline with distance label.
- */
+// ### What this file does
+// Shows the Airline Fire wildfire incident on the 3D map.
+// Draws glowing vertical beams at key locations (staging site, landing zone,
+// fire origin, fire station) and a delivery route line between them.
 
-/* ─── Visual tuning ─── */
+// ### Visual settings for beams, route line, and labels
 const BEAM_HEIGHT        = 2500;   // meters above base elevation
 const BEAM_WIDTH_INNER   = 8;
 const BEAM_WIDTH_OUTER   = 20;
@@ -19,7 +16,7 @@ const GROUND_MARKER_RADIUS = 40;   // meters
 const LABEL_FONT         = '13px "Space Mono", monospace';
 const DIST_LABEL_FONT    = 'bold 15px "Space Mono", monospace';
 
-/* ─── Incident data ─── */
+// ### Incident information and real-world coordinates for each location
 const INCIDENT = {
   name:  'Airline Fire',
   date:  'July 2–5, 2024',
@@ -93,12 +90,12 @@ const POINTS = [
 
 const ROUTE = { fromKey: 'staging', toKey: 'lz', css: '#ffd700' };
 
-/* ─── Module state ─── */
+// ### Internal state
 let entities = [];
 let visible  = true;
 let routeDistMiles = 0;
 
-/* ─── Haversine (miles) ─── */
+// ### Distance calculator — measures miles between two GPS coordinates on a sphere
 function haversine(lat1, lon1, lat2, lon2) {
   const R    = 3958.8; // Earth radius in miles
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -109,7 +106,7 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/* ─── Cesium entity creation ─── */
+// ### Create the 3D beacons, ground markers, labels, and delivery route on the map
 
 export function initIncidentOverlay(viewer) {
   // Beacon beams at each point
@@ -154,6 +151,7 @@ export function initIncidentOverlay(viewer) {
       ellipse: {
         semiMajorAxis: GROUND_MARKER_RADIUS,
         semiMinorAxis: GROUND_MARKER_RADIUS,
+        height: 0,
         material: color.withAlpha(0.3),
         outline: true,
         outlineColor: color.withAlpha(0.8),
@@ -234,7 +232,7 @@ export function initIncidentOverlay(viewer) {
   }
 }
 
-/* ─── GUI legend builder ─── */
+// ### Build the legend panel in the bottom-right corner showing incident details
 
 export function buildIncidentLegend() {
   const body = document.getElementById('incident-body');
@@ -295,7 +293,7 @@ export function buildIncidentLegend() {
   }
 }
 
-/* ─── Toggle visibility ─── */
+// ### Show or hide all incident markers
 
 export function toggleIncidentOverlay() {
   visible = !visible;
@@ -307,9 +305,9 @@ export function isOverlayVisible() {
   return visible;
 }
 
-/* ─── Teleport destination (overview of the incident area) ─── */
+// ### Camera position for the "Fly To" button — shows an overview of the fire area
 export const AIRLINE_FIRE_LOCATION = {
-  longitude: -121.2100,
-  latitude:  36.6670,
-  height:    900,
+  longitude: -121.20523,
+  latitude:  36.67424,
+  height:    393.2,  // 1290ft MSL / 250ft AGL
 };

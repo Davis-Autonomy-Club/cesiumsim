@@ -1,5 +1,8 @@
-// Wind model with mean wind, turbulence, and gusts
-// Based on ERD Section 2.2 environmental constraints (55 mph sustained, 100 mph gusts)
+// ### What this file does
+// Simulates realistic wind that affects the drone. Wind has three layers:
+// 1. Mean wind — a steady breeze in one direction
+// 2. Turbulence — random fluctuations that vary by location (using noise math)
+// 3. Gusts — sudden bursts of wind that hit randomly and fade over a few seconds
 
 import { createNoise3D } from 'simplex-noise';
 
@@ -130,9 +133,7 @@ export class WindModel {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PRESETS — based on ERD Section 2.2 environmental data
-// ═══════════════════════════════════════════════════════════════════════════
+// ### Wind presets — ready-made weather conditions from calm to extreme wildfire winds
 
 /** Calm conditions — light turbulence only */
 export const CALM = {

@@ -1,5 +1,6 @@
-// Flight Physics Module
-// Phase 1: Custom flight dynamics with altitude-dependent air density and wind
+// ### What this file does
+// Single entry point that re-exports everything from the flight physics module.
+// Other files import from here instead of reaching into individual sub-files.
 
 export { 
   ATLAS_CONFIG, 

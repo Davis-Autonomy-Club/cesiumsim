@@ -1,6 +1,9 @@
-// ATLAS drone configuration — matches ERD specifications
-// Switch between ATLAS_CONFIG (full-size) and DEV_CONFIG (testing)
+// ### What this file does
+// Defines the physical specs of two drones: ATLAS (full-size heavy-lift) and DEV (small test drone).
+// These numbers control how the drone flies — heavier drones need more thrust, bigger props
+// generate more lift, and drag depends on the drone's shape and size.
 
+// ### ATLAS — full-size 8-rotor heavy-lift drone (45kg, 48-inch propellers)
 export const ATLAS_CONFIG = {
   name: 'ATLAS',
 
@@ -34,7 +37,7 @@ export const ATLAS_CONFIG = {
   },
 };
 
-// Lightweight config for development/testing
+// ### DEV — small lightweight test drone (5kg) used during development
 export const DEV_CONFIG = {
   name: 'DEV',
 
@@ -64,6 +67,7 @@ export const DEV_CONFIG = {
   },
 };
 
+// ### Helper functions to calculate derived values from the config
 /**
  * Get total mass including current payload
  * @param {object} config - Drone configuration
