@@ -2,15 +2,14 @@
 
 High-fidelity first-person drone simulator built with CesiumJS and optional Google Photorealistic 3D Tiles.
 
-## What you get in v1
+## 📖 Documentation
 
-- First-person drone flight with mouse-look and inertial controls
-- Streaming global terrain via Cesium World Terrain
-- Google Photorealistic 3D Tiles enabled by default (hardcoded API key)
-- Automatic fallback to OSM buildings when Google tiles are not configured
-- Real-time HUD with speed, altitude, heading, attitude, and geo-position
+For a comprehensive guide on how to install, configure, and understand the codebase, please see:
 
-## Run
+👉 **[GETTING_STARTED.md](./GETTING_STARTED.md)**
+
+## Quick Run
+
 
 From `/Users/nilsfleig/Projects/cesiumsim`:
 
