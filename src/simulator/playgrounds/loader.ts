@@ -1,21 +1,21 @@
 import type { Playground, Obstacle } from "./types";
 
 export type PlaygroundLoadResult = {
-  terrainProvider: Cesium.TerrainProvider;
-  obstacleEntities: Cesium.Entity[];
+  terrainProvider: any;
+  obstacleEntities: any[];
   skipWorldDetailLayers: boolean;
 };
 
 export function loadPlayground(
   playground: Playground,
-  viewer: Cesium.Viewer,
-  excludeFromPicking?: Cesium.Entity[]
+  viewer: any,
+  excludeFromPicking?: any[]
 ): PlaygroundLoadResult {
-  const obstacleEntities: Cesium.Entity[] = [];
+  const obstacleEntities: any[] = [];
 
   for (const obs of playground.obstacles) {
-    const entity = createObstacleEntity(obs);
-    if (entity) {
+    const entities = createObstacleEntity(obs);
+    for (const entity of entities) {
       viewer.entities.add(entity);
       obstacleEntities.push(entity);
     }
@@ -34,24 +34,38 @@ export function loadPlayground(
 }
 
 export function unloadPlayground(
-  viewer: Cesium.Viewer,
-  obstacleEntities: Cesium.Entity[]
+  viewer: any,
+  obstacleEntities: any[]
 ): void {
   for (const entity of obstacleEntities) {
     viewer.entities.remove(entity);
   }
 }
 
-function createObstacleEntity(obs: Obstacle): Cesium.Entity | null {
+function createObstacleEntity(obs: Obstacle): any[] {
+  const entities: any[] = [];
+
   const position = Cesium.Cartesian3.fromDegrees(
     obs.position.lon,
     obs.position.lat,
     obs.position.height
   );
 
+  const getColor = (c?: { red: number; green: number; blue: number; alpha?: number }, fallback?: any) => {
+    return c
+      ? Cesium.Color.fromBytes(
+        Math.round(c.red * 255),
+        Math.round(c.green * 255),
+        Math.round(c.blue * 255),
+        Math.round((c.alpha ?? 0.9) * 255)
+      )
+      : fallback ?? Cesium.Color.GRAY.withAlpha(0.8);
+  };
+
   if (obs.type === "box") {
     const heading = obs.heading ?? 0;
-    return new Cesium.Entity({
+    const color = getColor(obs.color, Cesium.Color.GRAY.withAlpha(0.8));
+    entities.push(new Cesium.Entity({
       position,
       box: {
         dimensions: new Cesium.Cartesian3(
@@ -59,9 +73,9 @@ function createObstacleEntity(obs: Obstacle): Cesium.Entity | null {
           obs.dimensions.width,
           obs.dimensions.height
         ),
-        material: Cesium.Color.GRAY.withAlpha(0.8),
+        material: color,
         outline: true,
-        outlineColor: Cesium.Color.DARKGRAY,
+        outlineColor: color.brighten(0.3, new Cesium.Color()),
       },
       orientation: Cesium.Transforms.headingPitchRollQuaternion(
         position,
@@ -73,24 +87,25 @@ function createObstacleEntity(obs: Obstacle): Cesium.Entity | null {
         Cesium.Ellipsoid.WGS84,
         Cesium.Transforms.eastNorthUpToFixedFrame
       ),
-    });
+    }));
   }
 
-  if (obs.type === "cylinder") {
-    return new Cesium.Entity({
+  else if (obs.type === "cylinder") {
+    const color = getColor(obs.color, Cesium.Color.GRAY.withAlpha(0.8));
+    entities.push(new Cesium.Entity({
       position,
       cylinder: {
         length: obs.length,
         topRadius: obs.topRadius,
         bottomRadius: obs.bottomRadius ?? obs.topRadius,
-        material: Cesium.Color.GRAY.withAlpha(0.8),
+        material: color,
         outline: true,
-        outlineColor: Cesium.Color.DARKGRAY,
+        outlineColor: color.brighten(0.3, new Cesium.Color()),
       },
-    });
+    }));
   }
 
-  if (obs.type === "ring") {
+  else if (obs.type === "ring") {
     const innerRadius = obs.innerRadius;
     const outerRadius = obs.outerRadius;
     const segments = 32;
@@ -99,8 +114,8 @@ function createObstacleEntity(obs: Obstacle): Cesium.Entity | null {
       Cesium.Ellipsoid.WGS84,
       new Cesium.Matrix4()
     );
-    const outerPositions: Cesium.Cartesian3[] = [];
-    const innerPositions: Cesium.Cartesian3[] = [];
+    const outerPositions: any[] = [];
+    const innerPositions: any[] = [];
     const headingRad = Cesium.Math.toRadians(obs.heading ?? 0);
     const cosH = Math.cos(headingRad);
     const sinH = Math.sin(headingRad);
@@ -122,18 +137,94 @@ function createObstacleEntity(obs: Obstacle): Cesium.Entity | null {
     const hierarchy = new Cesium.PolygonHierarchy(outerPositions, [
       new Cesium.PolygonHierarchy(innerPositions.reverse()),
     ]);
-    return new Cesium.Entity({
+    const color = getColor(obs.color, Cesium.Color.CYAN.withAlpha(0.5));
+    entities.push(new Cesium.Entity({
       position,
       polygon: {
         hierarchy,
         extrudedHeight: 1,
         height: 0,
-        material: Cesium.Color.CYAN.withAlpha(0.5),
+        material: color,
         outline: true,
-        outlineColor: Cesium.Color.CYAN,
+        outlineColor: color.brighten(0.5, new Cesium.Color()),
       },
-    });
+    }));
   }
 
-  return null;
+  else if (obs.type === "tree") {
+    // Trunk
+    entities.push(new Cesium.Entity({
+      position: Cesium.Cartesian3.fromDegrees(obs.position.lon, obs.position.lat, obs.position.height + obs.trunkHeight / 2),
+      cylinder: {
+        length: obs.trunkHeight,
+        topRadius: obs.trunkRadius,
+        bottomRadius: obs.trunkRadius,
+        material: Cesium.Color.fromBytes(89, 63, 40, 230),  // brown
+      },
+    }));
+
+    // Canopy
+    const canopyHeight = obs.position.height + obs.trunkHeight + obs.canopyRadius * 0.7;
+    const canopyColor = obs.variant === "oak"
+      ? Cesium.Color.fromBytes(45, 100, 30, 220)   // dark green
+      : obs.variant === "cypress"
+        ? Cesium.Color.fromBytes(30, 80, 50, 220)    // deep green
+        : Cesium.Color.fromBytes(40, 110, 35, 220);  // pine green
+
+    entities.push(new Cesium.Entity({
+      position: Cesium.Cartesian3.fromDegrees(obs.position.lon, obs.position.lat, canopyHeight),
+      ellipsoid: {
+        radii: new Cesium.Cartesian3(obs.canopyRadius, obs.canopyRadius, obs.canopyRadius * 1.3),
+        material: canopyColor,
+      },
+    }));
+  }
+
+  else if (obs.type === "marker") {
+    const markerColor = getColor(obs.color);
+    const polePosition = Cesium.Cartesian3.fromDegrees(
+      obs.position.lon, obs.position.lat,
+      obs.position.height + obs.poleHeight / 2
+    );
+
+    // Pole
+    entities.push(new Cesium.Entity({
+      position: polePosition,
+      box: {
+        dimensions: new Cesium.Cartesian3(obs.poleWidth, obs.poleWidth, obs.poleHeight),
+        material: markerColor,
+        outline: true,
+        outlineColor: markerColor.brighten(0.3, new Cesium.Color()),
+      },
+    }));
+
+    // Flag at top
+    const flagPosition = Cesium.Cartesian3.fromDegrees(
+      obs.position.lon, obs.position.lat,
+      obs.position.height + obs.poleHeight + 1.5
+    );
+    entities.push(new Cesium.Entity({
+      position: flagPosition,
+      box: {
+        dimensions: new Cesium.Cartesian3(4, 0.2, 2.5),
+        material: markerColor,
+      },
+    }));
+
+    // Ground clearing disc (optional)
+    if (obs.hasClearingCircle && obs.clearingRadius) {
+      entities.push(new Cesium.Entity({
+        position: Cesium.Cartesian3.fromDegrees(obs.position.lon, obs.position.lat, obs.position.height + 0.05),
+        ellipse: {
+          semiMajorAxis: obs.clearingRadius,
+          semiMinorAxis: obs.clearingRadius,
+          material: markerColor.withAlpha(0.2),
+          outline: true,
+          outlineColor: markerColor,
+        },
+      }));
+    }
+  }
+
+  return entities;
 }

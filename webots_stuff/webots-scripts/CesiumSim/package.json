@@ -1,0 +1,19 @@
+{
+  "name": "cesium-flight-sandbox",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "cesium": "^1.119.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3",
+    "vite": "^7.3.1",
+    "vite-plugin-cesium": "^1.2.23"
+  }
+}

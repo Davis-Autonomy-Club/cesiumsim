@@ -28,6 +28,12 @@ import {
   mazePlayground,
 } from "./playgrounds";
 import type { Playground } from "./playgrounds/types";
+import { forestSupplyDropMission } from "./playgrounds/missions/scenarios/forest-supply-drop";
+import { canyonTerrainMission } from "./playgrounds/missions/scenarios/canyon-terrain";
+import { firefighterIdMission } from "./playgrounds/missions/scenarios/firefighter-id";
+import { multiStopDeliveryMission } from "./playgrounds/missions/scenarios/multi-stop-delivery";
+import { createMissionBenchmarkRunner } from "./playgrounds/missions/benchmark-runner";
+import type { MissionPlayground } from "./playgrounds/missions/types";
 import {
   createCloudFogOverlay,
   createFpvOverlay,
@@ -120,6 +126,8 @@ export function startSimulator(): void {
     mazePlayground,
   ];
   let activePlayground: Playground | null = null;
+  let activeMissionPlayground: MissionPlayground | null = null;
+  let missionBenchmarkRunner: ReturnType<typeof createMissionBenchmarkRunner> | null = null;
   let playgroundObstacleEntities: any[] = [];
   let worldTerrainProvider: any = null;
   const flightMetrics = new FlightMetrics();
@@ -536,7 +544,7 @@ export function startSimulator(): void {
       }
 
       const numRays = BUILDING_COLLISION.numRays ?? 5;
-      const rayDirs: Cesium.Cartesian3[] = [];
+      const rayDirs: any[] = [];
       rayDirs.push(Cesium.Cartesian3.clone(scratch.forward, new Cesium.Cartesian3()));
       if (numRays >= 5) {
         Cesium.Cartesian3.subtract(scratch.forward, scratch.right, scratch.rayDir);
@@ -551,7 +559,7 @@ export function startSimulator(): void {
       }
 
       let closestDistance = BUILDING_COLLISION.forwardCheckDistance + 1;
-      let closestHit: { position: Cesium.Cartesian3; rayDir: Cesium.Cartesian3 } | null = null;
+      let closestHit: { position: any; rayDir: any } | null = null;
 
       for (const rayDir of rayDirs) {
         const ray = new Cesium.Ray(drone.position, rayDir);
@@ -682,17 +690,32 @@ export function startSimulator(): void {
 
     const metricsEl = document.getElementById("metrics-display");
     if (metricsEl) {
-      const result = flightMetrics.getResult(
-        activePlayground?.timeLimit,
-        (lon, lat, h) => {
-          const c = Cesium.Cartesian3.fromDegrees(lon, lat, h);
-          return { x: c.x, y: c.y, z: c.z };
-        }
-      );
-      const wpTotal = activePlayground?.waypoints?.length ?? 0;
-      const wpReached = result.waypointsReached.size;
-      metricsEl.textContent =
-        `Collisions: ${result.collisionCount} | Waypoints: ${wpReached}/${wpTotal} | Score: ${result.score.toFixed(2)}`;
+      if (activeMissionPlayground && missionBenchmarkRunner) {
+        const mResult = missionBenchmarkRunner.getResult();
+        const lines = [
+          `Mission: ${activeMissionPlayground.name}`,
+          `Time: ${mResult.timeToCompletionS.toFixed(0)}s`,
+          mResult.zoneProgression && mResult.zoneProgression !== "none" ? `Zone: ${mResult.zoneProgression}` : null,
+          mResult.maxAltitudeM !== undefined ? `Max Alt: ${mResult.maxAltitudeM.toFixed(1)}m` : null,
+          mResult.wrongTargetApproached !== undefined ? `Wrong Target: ${mResult.wrongTargetApproached ? "YES" : "no"}` : null,
+          mResult.correctTargetReached && mResult.correctTargetReached !== "neither" ? `Target: ${mResult.correctTargetReached}` : null,
+          mResult.waypoint1Reached !== undefined ? `WP1: ${mResult.waypoint1Reached ? "✓" : "—"} | WP2: ${mResult.waypoint2Reached ? "✓" : "—"}` : null,
+          `Collisions: ${mResult.collisionCount}`,
+        ].filter(Boolean).join(" | ");
+        metricsEl.innerHTML = lines;
+      } else {
+        const result = flightMetrics.getResult(
+          activePlayground?.timeLimit,
+          (lon, lat, h) => {
+            const c = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+            return { x: c.x, y: c.y, z: c.z };
+          }
+        );
+        const wpTotal = activePlayground?.waypoints?.length ?? 0;
+        const wpReached = result.waypointsReached.size;
+        metricsEl.textContent =
+          `Collisions: ${result.collisionCount} | Waypoints: ${wpReached}/${wpTotal} | Score: ${result.score.toFixed(2)}`;
+      }
     }
   }
 
@@ -718,6 +741,12 @@ export function startSimulator(): void {
   }
 
   function switchToPlayground(playground: Playground) {
+    if (missionBenchmarkRunner) {
+      missionBenchmarkRunner.stop();
+      missionBenchmarkRunner = null;
+    }
+    activeMissionPlayground = null;
+
     unloadPlayground(viewer, playgroundObstacleEntities);
     playgroundObstacleEntities = [];
 
@@ -733,7 +762,52 @@ export function startSimulator(): void {
     HUD.datasetStatus.textContent = `Playground: ${playground.name}`;
   }
 
+  function switchToMission(mission: MissionPlayground) {
+    if (playgroundObstacleEntities.length) {
+      unloadPlayground(viewer, playgroundObstacleEntities);
+      playgroundObstacleEntities = [];
+    }
+
+    const result = loadPlaygroundAssets(mission, viewer);
+    playgroundObstacleEntities = result.obstacleEntities;
+    viewer.terrainProvider = result.terrainProvider;
+    if (googleTilesRef) googleTilesRef.show = false;
+    if (osmBuildingsRef) osmBuildingsRef.show = false;
+
+    activeMissionPlayground = mission;
+    activePlayground = null;
+
+    missionBenchmarkRunner = createMissionBenchmarkRunner(mission, {
+      getDronePosition: () => {
+        Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+        return {
+          lon: Cesium.Math.toDegrees(scratch.cartographic.longitude),
+          lat: Cesium.Math.toDegrees(scratch.cartographic.latitude),
+          altAgl: Math.max(0, scratch.cartographic.height - drone.lastGroundHeight),
+          altMsl: scratch.cartographic.height,
+          heading: drone.heading,
+        };
+      },
+      toCartesian: (lon, lat, h) => {
+        const c = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+        return { x: c.x, y: c.y, z: c.z };
+      },
+      recordCollision: () => flightMetrics.recordCollision(),
+    });
+    missionBenchmarkRunner.start();
+
+    teleportTo(mission.spawn);
+    flightMetrics.reset();
+    HUD.datasetStatus.textContent = `Mission: ${mission.name}`;
+  }
+
   function switchToRealWorld() {
+    if (missionBenchmarkRunner) {
+      missionBenchmarkRunner.stop();
+      missionBenchmarkRunner = null;
+    }
+    activeMissionPlayground = null;
+
     unloadPlayground(viewer, playgroundObstacleEntities);
     playgroundObstacleEntities = [];
     activePlayground = null;
@@ -820,11 +894,43 @@ export function startSimulator(): void {
             const ob = document.getElementById(oid);
             if (ob) ob.classList.toggle("active", oid === id);
           });
+          const allMissionIds = missionBtns.map(m => m.id);
+          allMissionIds.forEach((oid) => {
+            const ob = document.getElementById(oid);
+            if (ob) ob.classList.remove("active");
+          });
+
           if (playground) {
             switchToPlayground(playground);
           } else {
             switchToRealWorld();
           }
+          btn.blur();
+        });
+      }
+    }
+
+    const missionBtns = [
+      { id: "mission-forest", mission: forestSupplyDropMission },
+      { id: "mission-canyon", mission: canyonTerrainMission },
+      { id: "mission-firefighter", mission: firefighterIdMission },
+      { id: "mission-multistop", mission: multiStopDeliveryMission },
+    ];
+    for (const { id, mission } of missionBtns) {
+      const btn = document.getElementById(id);
+      if (btn) {
+        btn.addEventListener("click", () => {
+          missionBtns.forEach(({ id: oid }) => {
+            const ob = document.getElementById(oid);
+            if (ob) ob.classList.toggle("active", oid === id);
+          });
+          const allPlaygroundIds = playgroundBtns.map(p => p.id);
+          allPlaygroundIds.forEach((oid) => {
+            const ob = document.getElementById(oid);
+            if (ob) ob.classList.remove("active");
+          });
+
+          switchToMission(mission);
           btn.blur();
         });
       }
@@ -1100,6 +1206,15 @@ export function startSimulator(): void {
     lastTime = now;
 
     flightMetrics.updatePosition(drone.position.x, drone.position.y, drone.position.z);
+
+    if (missionBenchmarkRunner && missionBenchmarkRunner.isRunning()) {
+      const tickResult = missionBenchmarkRunner.tick(dt);
+      if (tickResult.done && tickResult.result) {
+        console.log("[mission] Complete:", tickResult.result);
+        missionBenchmarkRunner = null;
+      }
+    }
+
     if (activePlayground?.waypoints?.length) {
       flightMetrics.checkWaypointProximity(
         drone.position.x,

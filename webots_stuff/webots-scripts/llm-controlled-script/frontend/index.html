@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drone Observability Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+</head>
+
+<body class="dark-theme">
+  <header class="glass-header">
+    <div class="header-content">
+      <div class="logo-area">
+        <span class="pulse-icon"></span>
+        <h1>Drone Observability</h1>
+      </div>
+      <div class="mission-controls">
+        <select id="mission-selector" class="glass-select">
+          <option value="">Select a mission...</option>
+        </select>
+      </div>
+      <div class="mission-info" id="mission-info">
+        <span class="label">Loading mission...</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="dashboard">
+    <div id="loader" class="loader-container">
+      <div class="spinner"></div>
+      <p>Loading mission data...</p>
+    </div>
+    <div id="iterations-container" class="iterations-list"></div>
+  </main>
+
+  <template id="iteration-template">
+    <div class="iteration-card glass-card">
+      <div class="card-header">
+        <span class="iteration-number">#1</span>
+        <span class="timestamp">2026-01-23T09:28:16</span>
+        <span class="action-tag">ACTION</span>
+      </div>
+      <div class="card-body">
+        <div class="observation-area">
+          <div class="image-wrapper">
+            <img src="" alt="Drone Observation" class="observation-image">
+            <div class="overlay">Camera Feed</div>
+          </div>
+          <div class="prompt-box">
+            <h3>Input Prompt</h3>
+            <div class="prompt-content-wrapper">
+              <pre class="prompt-text"></pre>
+            </div>
+            <button class="toggle-prompt">Show Full Prompt</button>
+          </div>
+        </div>
+        <div class="response-area">
+          <h3>LLM Decision</h3>
+          <div class="reasoning-box">
+            <p class="reasoning-text"></p>
+          </div>
+          <div class="decision-details">
+            <div class="detail-item">
+              <span class="detail-label">Action</span>
+              <span class="detail-value action-value">forward</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Magnitude</span>
+              <span class="detail-value magnitude-value">medium</span>
+            </div>
+            <div class="detail-item">
+              <span class="detail-label">Goal Achieved</span>
+              <span class="detail-value goal-value">false</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <script src="script.js"></script>
+</body>
+
+</html>

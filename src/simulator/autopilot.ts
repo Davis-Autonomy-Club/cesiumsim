@@ -63,6 +63,6 @@ export function createAutopilot(playground: Playground) {
       const vertical = dHeight > 5 ? 1 : dHeight < -5 ? -1 : 0;
 
       return { forward, strafe, vertical, yaw };
-    };
+    }
   };
 }
