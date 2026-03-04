@@ -177,3 +177,74 @@ export function createFpvOverlay(): FpvOverlayElements {
 
   return { overlay, altitude, speed };
 }
+
+export function createCollisionDialog(): HTMLDivElement {
+  const overlay = document.createElement("div");
+  overlay.id = "collision-dialog";
+  overlay.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(20, 0, 0, 0.9);
+    border: 2px solid #ff4444;
+    padding: 2rem;
+    color: #fff;
+    font-family: 'Space Mono', monospace;
+    z-index: 100;
+    text-align: center;
+    display: none;
+    flex-direction: column;
+    gap: 1rem;
+    box-shadow: 0 0 30px rgba(255, 0, 0, 0.4);
+    min-width: 300px;
+  `;
+
+  const title = document.createElement("h1");
+  title.textContent = "YOU COLLIDED";
+  title.style.cssText = "color: #ff4444; margin: 0; font-size: 2.5rem; letter-spacing: 0.1em;";
+  overlay.appendChild(title);
+
+  const stats = document.createElement("div");
+  stats.id = "collision-stats";
+  stats.style.cssText = "text-align: left; margin: 1rem 0; font-size: 1.1rem; line-height: 1.6;";
+  overlay.appendChild(stats);
+
+  const reloadBtn = document.createElement("button");
+  reloadBtn.id = "collision-reload-btn";
+  reloadBtn.textContent = "RELOAD MISSION";
+  reloadBtn.style.cssText = `
+    margin-top: 1.5rem;
+    padding: 0.8rem 1.5rem;
+    background: #ff4444;
+    color: white;
+    border: none;
+    font-family: 'Space Mono', monospace;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+    letter-spacing: 0.1em;
+  `;
+  reloadBtn.onmouseover = () => { reloadBtn.style.background = "#ff6666"; };
+  reloadBtn.onmouseout = () => { reloadBtn.style.background = "#ff4444"; };
+  reloadBtn.onclick = () => { window.location.reload(); };
+  overlay.appendChild(reloadBtn);
+
+  document.body.appendChild(overlay);
+  return overlay;
+}
+
+export function showCollisionDialog(
+  overlay: HTMLDivElement,
+  data: { time: string; object: string; distanceToGoal: string }
+): void {
+  const stats = overlay.querySelector("#collision-stats");
+  if (stats) {
+    stats.innerHTML = `
+      <div>=> Time into mission: ${data.time}</div>
+      <div>=> Collision object: ${data.object}</div>
+      <div>=> Distance from goal: ${data.distanceToGoal}</div>
+    `;
+  }
+  overlay.style.display = "flex";
+}

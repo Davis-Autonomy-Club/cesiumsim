@@ -37,6 +37,8 @@ import type { MissionPlayground } from "./playgrounds/missions/types";
 import {
   createCloudFogOverlay,
   createFpvOverlay,
+  createCollisionDialog,
+  showCollisionDialog,
   getHudElements,
   setFlightStatus,
   updateSpeedTierHud,
@@ -87,7 +89,7 @@ export function startSimulator(): void {
     ),
     horizontalVelocity: new Cesium.Cartesian3(0.0, 0.0, 0.0),
     verticalSpeed: 0.0,
-    heading: Cesium.Math.toRadians(200.0),
+    heading: Cesium.Math.toRadians(45.0),
     visualPitch: 0.0,
     visualRoll: 0.0,
     orientation: new Cesium.Quaternion(0, 0, 0, 1),
@@ -143,6 +145,8 @@ export function startSimulator(): void {
   let fpvOverlay: HTMLDivElement | null = null;
   let fpvHudAlt: HTMLSpanElement | null = null;
   let fpvHudSpd: HTMLSpanElement | null = null;
+  let collisionDialog: HTMLDivElement | null = null;
+  let isPausedForCollision = false;
 
   /* ─── Dynamic resolution scaling ─── */
   const DRS = {
@@ -382,6 +386,9 @@ export function startSimulator(): void {
         currentHeight: scratch.cartographic.height,
       });
       flightMetrics.recordCollision();
+      // We don't trigger the full "You Collided" dialog for basic terrain clearance enforcement,
+      // as it can trigger erroneously on startup or during minor ground contact.
+      // Mission failure is reserved for hard obstacle/building impacts.
       scratch.cartographic.height = minHeight;
       Cesium.Cartesian3.fromRadians(
         scratch.cartographic.longitude,
@@ -578,6 +585,7 @@ export function startSimulator(): void {
       }
 
       flightMetrics.recordCollision();
+      triggerCollisionDialog(closestHit.rayDir ? "Obstacle" : "Building");
       const distance = closestDistance;
       const hitNormal = scratch.rayDir;
       Cesium.Cartesian3.negate(closestHit.rayDir, hitNormal);
@@ -731,7 +739,7 @@ export function startSimulator(): void {
     );
     drone.horizontalVelocity = new Cesium.Cartesian3(0.0, 0.0, 0.0);
     drone.verticalSpeed = 0.0;
-    drone.heading = Cesium.Math.toRadians(200.0);
+    drone.heading = Cesium.Math.toRadians(45.0);
     drone.visualPitch = 0.0;
     drone.visualRoll = 0.0;
     updateDroneOrientation();
@@ -1205,6 +1213,11 @@ export function startSimulator(): void {
     const dt = Math.min(0.033, Math.max(0.001, (now - lastTime) / 1000.0));
     lastTime = now;
 
+    if (isPausedForCollision) {
+      requestAnimationFrame(stepFrame);
+      return;
+    }
+
     flightMetrics.updatePosition(drone.position.x, drone.position.y, drone.position.z);
 
     if (missionBenchmarkRunner && missionBenchmarkRunner.isRunning()) {
@@ -1302,6 +1315,7 @@ export function startSimulator(): void {
       // Create the cloud fog overlay element
       cloudFogOverlay = createCloudFogOverlay();
       const fpv = createFpvOverlay();
+      collisionDialog = createCollisionDialog();
       fpvOverlay = fpv.overlay;
       fpvHudAlt = fpv.altitude;
       fpvHudSpd = fpv.speed;
@@ -1336,6 +1350,32 @@ export function startSimulator(): void {
       HUD.datasetStatus.textContent = "Initialization failed.";
       setFlightStatus(HUD, "Check browser console for the startup error.", true);
     }
+  }
+
+  function triggerCollisionDialog(objectName: string) {
+    if (!collisionDialog || isPausedForCollision) return;
+
+    // Grace period: ignore collisions in the first second of flight/mission to prevent 
+    // startup race conditions or spawn-point clipping from locking the user out.
+    if (flightMetrics.getElapsedTime() < 1.0) return;
+
+    isPausedForCollision = true;
+    const elapsed = flightMetrics.getElapsedTime().toFixed(1) + "s";
+
+    // Calculate distance to goal
+    let distGoal = "N/A";
+    if (activeMissionPlayground && activeMissionPlayground.missionTargets.length > 0) {
+      const target = activeMissionPlayground.missionTargets[0];
+      const targetCart = Cesium.Cartesian3.fromDegrees(target.position.lon, target.position.lat, target.position.height);
+      const d = Cesium.Cartesian3.distance(drone.position, targetCart);
+      distGoal = d.toFixed(1) + "m";
+    }
+
+    showCollisionDialog(collisionDialog, {
+      time: elapsed,
+      object: objectName,
+      distanceToGoal: distGoal
+    });
   }
 
   init();

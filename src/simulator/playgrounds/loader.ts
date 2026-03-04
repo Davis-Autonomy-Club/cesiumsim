@@ -57,14 +57,14 @@ function createObstacleEntity(obs: Obstacle): any[] {
         Math.round(c.red * 255),
         Math.round(c.green * 255),
         Math.round(c.blue * 255),
-        Math.round((c.alpha ?? 0.9) * 255)
+        Math.round((c.alpha ?? 1.0) * 255)
       )
-      : fallback ?? Cesium.Color.GRAY.withAlpha(0.8);
+      : fallback ?? Cesium.Color.GRAY.withAlpha(1.0);
   };
 
   if (obs.type === "box") {
     const heading = obs.heading ?? 0;
-    const color = getColor(obs.color, Cesium.Color.GRAY.withAlpha(0.8));
+    const color = getColor(obs.color, Cesium.Color.GRAY.withAlpha(1.0));
     entities.push(new Cesium.Entity({
       position,
       box: {
@@ -91,7 +91,7 @@ function createObstacleEntity(obs: Obstacle): any[] {
   }
 
   else if (obs.type === "cylinder") {
-    const color = getColor(obs.color, Cesium.Color.GRAY.withAlpha(0.8));
+    const color = getColor(obs.color, Cesium.Color.GRAY.withAlpha(1.0));
     entities.push(new Cesium.Entity({
       position,
       cylinder: {
