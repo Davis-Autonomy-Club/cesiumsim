@@ -9,6 +9,12 @@ interface ImportMeta {
 }
 
 declare const Cesium: any;
+declare namespace Cesium {
+  type Cartesian3 = any;
+  type Entity = any;
+  type TerrainProvider = any;
+  type Viewer = any;
+}
 
 interface Window {
   Cesium?: any;

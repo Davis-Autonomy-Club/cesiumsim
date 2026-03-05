@@ -45,7 +45,6 @@ export function createAutopilot(playground: Playground) {
       const dLat = (targetLat - droneLat) * 110540;
       const dHeight = targetHeight - droneHeight;
 
-      const distance = Math.sqrt(dLon * dLon + dLat * dLat);
       const horizontalDist = Math.sqrt(dLon * dLon + dLat * dLat);
       const toTargetHeading = Math.atan2(dLon, dLat);
       let headingError = toTargetHeading - droneHeading;
@@ -63,6 +62,6 @@ export function createAutopilot(playground: Playground) {
       const vertical = dHeight > 5 ? 1 : dHeight < -5 ? -1 : 0;
 
       return { forward, strafe, vertical, yaw };
-    };
+    }
   };
 }

@@ -50,6 +50,19 @@ export const BUILDING_COLLISION = {
   energyLoss: 0.3,
 };
 
+export const COLLISION_RULES = {
+  floorCollisionsEnabled: true,
+};
+
+export const DRONE_COLLIDER = {
+  // Approximate physical collider around the drone body (meters)
+  length: 3.0,
+  width: 3.0,
+  height: 1.4,
+  // Raise collider center so it encloses the visible model instead of hanging below it
+  centerUpOffset: 1,
+};
+
 export const CHASE_FOV = Cesium.Math.toRadians(119.6);
 export const FPV_FOV = Cesium.Math.toRadians(140.0);
 export const FPV_PITCH_DOWN = Cesium.Math.toRadians(-45.0);

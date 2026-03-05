@@ -1,4 +1,4 @@
-import type { Waypoint } from "./playgrounds/types";
+import type { Waypoint, WaypointMode } from "./playgrounds/types";
 
 export interface FlightMetricsResult {
   collisionCount: number;
@@ -18,15 +18,19 @@ export class FlightMetrics {
   private pathDistance = 0;
   private lastPosition: { x: number; y: number; z: number } | null = null;
   private waypoints: Waypoint[] = [];
+  private waypointMode: WaypointMode = "ordered";
+  private nextWaypointIndex = 0;
   private startPosition: { x: number; y: number; z: number } | null = null;
 
-  reset(waypoints?: Waypoint[]): void {
+  reset(waypoints?: Waypoint[], waypointMode: WaypointMode = "ordered"): void {
     this.collisionCount = 0;
     this.waypointsReached.clear();
     this.startTime = performance.now() / 1000;
     this.pathDistance = 0;
     this.lastPosition = null;
     this.waypoints = waypoints ?? [];
+    this.waypointMode = waypointMode;
+    this.nextWaypointIndex = 0;
     this.startPosition = null;
   }
 
@@ -58,6 +62,35 @@ export class FlightMetrics {
     waypoints: Waypoint[],
     toCartesian: (lon: number, lat: number, height: number) => { x: number; y: number; z: number }
   ): void {
+    if (waypoints.length === 0) {
+      return;
+    }
+
+    if (this.waypointMode === "ordered") {
+      while (
+        this.nextWaypointIndex < waypoints.length &&
+        this.waypointsReached.has(waypoints[this.nextWaypointIndex].id)
+      ) {
+        this.nextWaypointIndex++;
+      }
+
+      if (this.nextWaypointIndex >= waypoints.length) {
+        return;
+      }
+
+      const wp = waypoints[this.nextWaypointIndex];
+      const wpCart = toCartesian(wp.position.lon, wp.position.lat, wp.position.height);
+      const dx = x - wpCart.x;
+      const dy = y - wpCart.y;
+      const dz = z - wpCart.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (dist <= wp.radius) {
+        this.recordWaypointReached(wp.id);
+        this.nextWaypointIndex++;
+      }
+      return;
+    }
+
     for (const wp of waypoints) {
       if (this.waypointsReached.has(wp.id)) continue;
       const wpCart = toCartesian(wp.position.lon, wp.position.lat, wp.position.height);
@@ -69,6 +102,28 @@ export class FlightMetrics {
         this.recordWaypointReached(wp.id);
       }
     }
+  }
+
+  getNextWaypoint(waypoints?: Waypoint[]): Waypoint | null {
+    const wps = waypoints ?? this.waypoints;
+    if (wps.length === 0) {
+      return null;
+    }
+
+    if (this.waypointMode === "ordered") {
+      let idx = this.nextWaypointIndex;
+      while (idx < wps.length && this.waypointsReached.has(wps[idx].id)) {
+        idx++;
+      }
+      return idx < wps.length ? wps[idx] : null;
+    }
+
+    for (const wp of wps) {
+      if (!this.waypointsReached.has(wp.id)) {
+        return wp;
+      }
+    }
+    return null;
   }
 
   getElapsedTime(): number {

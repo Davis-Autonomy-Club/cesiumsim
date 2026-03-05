@@ -7,7 +7,6 @@ export type PilotType = "autopilot" | "manual" | "gemini";
 export type BenchmarkOptions = {
   pilotType: PilotType;
   maxDurationSeconds: number;
-  keySequence?: { code: string; duration: number }[];
 };
 
 export type BenchmarkResult = {
@@ -95,6 +94,8 @@ export function createBenchmarkRunner(
           pos.heading
         );
         callbacks.applyInput(input);
+      } else {
+        callbacks.applyInput({ forward: 0, strafe: 0, vertical: 0, yaw: 0 });
       }
 
       return { done: false };

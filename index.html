@@ -63,12 +63,27 @@
       <button id="playground-maze" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">Maze</button>
     </div>
     <div id="metrics-bar" style="margin-top: 0.4rem; font-size: 0.85rem; color: #aaa;">
-      <span id="metrics-display">Collisions: 0 | Waypoints: 0/0 | Score: -</span>
+      <span id="metrics-display">Collisions: 0 | Waypoints: 0/0 | Next: none | Mode: ordered | Score: -</span>
+    </div>
+    <div style="margin-top: 0.2rem; font-size: 0.78rem; color: #8db7d6;">
+      Waypoint colors: orange = active, blue = upcoming, green = reached.
     </div>
     <div id="collision-toggle" style="margin-top: 0.3rem; font-size: 0.8rem; color: #aaa;">
       <label style="cursor: pointer; user-select: none;">
         <input id="collision-box-toggle" type="checkbox" style="margin-right: 0.35rem;" />
         Show drone collision box
+      </label>
+    </div>
+    <div id="obstacle-collision-toggle" style="margin-top: 0.25rem; font-size: 0.8rem; color: #aaa;">
+      <label style="cursor: pointer; user-select: none;">
+        <input id="obstacle-collision-box-toggle" type="checkbox" style="margin-right: 0.35rem;" />
+        Show obstacle collision boxes
+      </label>
+    </div>
+    <div id="drone-visual-toggle" style="margin-top: 0.25rem; font-size: 0.8rem; color: #aaa;">
+      <label style="cursor: pointer; user-select: none;">
+        <input id="drone-transparent-toggle" type="checkbox" style="margin-right: 0.35rem;" />
+        Make drone transparent
       </label>
     </div>
     <div class="controls">

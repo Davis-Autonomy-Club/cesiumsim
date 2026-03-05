@@ -4,12 +4,14 @@ import {
   updateGeospatialOverlay,
 } from "../overlay/geospatial-overlay";
 import {
+  COLLISION_RULES,
   BUILDING_COLLISION,
   CAMERA_CHASE,
   CAMERA_FPV,
   CHASE_FOV,
   DEFAULT_CESIUM_TOKEN,
   DEFAULT_GOOGLE_MAPS_API_KEY,
+  DRONE_COLLIDER,
   FLIGHT,
   FPV_FOV,
   FPV_PITCH_DOWN,
@@ -21,13 +23,14 @@ import {
 import { FlightMetrics } from "./flight-metrics";
 import { GeminiController } from "./gemini-controller";
 import {
+  applyWaypointVisualState,
   loadPlayground as loadPlaygroundAssets,
   unloadPlayground,
   slalomPlayground,
   ringCoursePlayground,
   mazePlayground,
 } from "./playgrounds";
-import type { Playground } from "./playgrounds/types";
+import type { Obstacle, Playground } from "./playgrounds/types";
 import {
   createCloudFogOverlay,
   createFpvOverlay,
@@ -121,8 +124,20 @@ export function startSimulator(): void {
   ];
   let activePlayground: Playground | null = null;
   let playgroundObstacleEntities: any[] = [];
+  let playgroundWaypointEntities: any[] = [];
+  let playgroundCollisionDebugEntities: any[] = [];
+  let showObstacleCollisionBoxes = false;
+  let playgroundCollisionVolumes: PlaygroundCollisionVolume[] = [];
+  let wasPlaygroundObstacleContact = false;
   let worldTerrainProvider: any = null;
   const flightMetrics = new FlightMetrics();
+  const previousDroneColliderCenter = new Cesium.Cartesian3();
+  const currentDroneColliderCenter = new Cesium.Cartesian3();
+  const droneColliderCenterScratch = new Cesium.Cartesian3();
+  const droneColliderOffsetScratch = new Cesium.Cartesian3();
+  const obstacleLocalPointScratch = new Cesium.Cartesian3();
+  const obstacleWorldPointScratch = new Cesium.Cartesian3();
+  const obstacleSafePointScratch = new Cesium.Cartesian3();
 
   /* ─── Drone Cesium entity state ─── */
   const droneHpr = new Cesium.HeadingPitchRoll();
@@ -365,6 +380,11 @@ export function startSimulator(): void {
     if (Number.isFinite(sampledGround)) {
       drone.lastGroundHeight = sampledGround;
     }
+
+    if (!COLLISION_RULES.floorCollisionsEnabled) {
+      return;
+    }
+
     const minHeight = drone.lastGroundHeight + FLIGHT.minimumClearance;
     if (scratch.cartographic.height < minHeight) {
       console.log("[collision] drone vs terrain/ground", {
@@ -373,7 +393,9 @@ export function startSimulator(): void {
         minAllowedHeight: minHeight,
         currentHeight: scratch.cartographic.height,
       });
-      flightMetrics.recordCollision();
+      if (!activePlayground) {
+        flightMetrics.recordCollision();
+      }
       scratch.cartographic.height = minHeight;
       Cesium.Cartesian3.fromRadians(
         scratch.cartographic.longitude,
@@ -400,6 +422,11 @@ export function startSimulator(): void {
 
   function enforceBuildingCollision(): void {
     if (!BUILDING_COLLISION.enabled || !viewer || !viewer.scene) {
+      return;
+    }
+
+    // Playground collision is handled analytically against obstacle definitions.
+    if (activePlayground) {
       return;
     }
 
@@ -432,7 +459,7 @@ export function startSimulator(): void {
     // rooftops/tiles. In playgrounds we skip this so walls/obstacles
     // behave more like hard blockers instead of "teleporting" the drone
     // up to the roof height.
-    if (hasSampleHeight && !activePlayground) {
+    if (COLLISION_RULES.floorCollisionsEnabled && hasSampleHeight && !activePlayground) {
       const sceneHeight = scene.sampleHeight(
         scratch.buildingCartographic,
         excludeList,
@@ -489,23 +516,28 @@ export function startSimulator(): void {
     if (hasPickFromRay) {
       const minClearance = BUILDING_COLLISION.minimumClearance;
 
-      // Downward ray
       const downDir = Cesium.Cartesian3.negate(scratch.surfaceNormal, new Cesium.Cartesian3());
-      const downHit = scene.pickFromRay(new Cesium.Ray(drone.position, downDir), excludeList);
-      if (downHit?.position) {
-        const distBelow = Cesium.Cartesian3.distance(drone.position, downHit.position);
-        if (distBelow < minClearance) {
-          const correction = minClearance - distBelow;
-          Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, correction, scratch.velocityStep);
-          Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
-          if (drone.verticalSpeed < 0.0) drone.verticalSpeed = 0.0;
-          const hDown = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
-          if (hDown < 0.0) {
-            Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, hDown, scratch.velocityStep);
-            Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+
+      if (COLLISION_RULES.floorCollisionsEnabled) {
+        // Downward ray
+        const downHit = scene.pickFromRay(new Cesium.Ray(drone.position, downDir), excludeList);
+        if (downHit?.position) {
+          const distBelow = Cesium.Cartesian3.distance(drone.position, downHit.position);
+          if (distBelow < minClearance) {
+            const correction = minClearance - distBelow;
+            Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, correction, scratch.velocityStep);
+            Cesium.Cartesian3.add(drone.position, scratch.velocityStep, drone.position);
+            if (drone.verticalSpeed < 0.0) drone.verticalSpeed = 0.0;
+            const hDown = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
+            if (hDown < 0.0) {
+              Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, hDown, scratch.velocityStep);
+              Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+            }
+            if (!activePlayground) {
+              flightMetrics.recordCollision();
+            }
+            console.log("[collision] drone vs object below", { distBelow, minClearance });
           }
-          flightMetrics.recordCollision();
-          console.log("[collision] drone vs object below", { distBelow, minClearance });
         }
       }
 
@@ -601,6 +633,65 @@ export function startSimulator(): void {
     }
   }
 
+  function enforcePlaygroundObstacleCollision(): void {
+    if (!activePlayground || playgroundCollisionVolumes.length === 0) {
+      wasPlaygroundObstacleContact = false;
+      return;
+    }
+
+    getDroneColliderCenter(drone.position, currentDroneColliderCenter);
+
+    const collidingVolume = samplePlaygroundCollisionAlongMotion(
+      previousDroneColliderCenter,
+      currentDroneColliderCenter,
+      playgroundCollisionVolumes,
+      obstacleLocalPointScratch,
+      obstacleSafePointScratch
+    );
+
+    if (!collidingVolume) {
+      wasPlaygroundObstacleContact = false;
+      return;
+    }
+
+    if (!wasPlaygroundObstacleContact) {
+      flightMetrics.recordCollision();
+      console.log("[collision] playground obstacle", {
+        type: collidingVolume.type,
+        position: {
+          lat: Cesium.Math.toDegrees(
+            Cesium.Cartographic.fromCartesian(
+              drone.position,
+              Cesium.Ellipsoid.WGS84,
+              scratch.cartographic
+            ).latitude
+          ),
+          lon: Cesium.Math.toDegrees(scratch.cartographic.longitude),
+          height: scratch.cartographic.height,
+        },
+      });
+    }
+    wasPlaygroundObstacleContact = true;
+
+    Cesium.Cartesian3.clone(obstacleSafePointScratch, currentDroneColliderCenter);
+    if (isDroneInsideCollisionVolume(currentDroneColliderCenter, collidingVolume, obstacleLocalPointScratch)) {
+      pushDroneOutOfCollisionVolume(
+        currentDroneColliderCenter,
+        collidingVolume,
+        obstacleLocalPointScratch,
+        obstacleWorldPointScratch
+      );
+    }
+    setDronePositionFromColliderCenter(currentDroneColliderCenter);
+
+    drone.horizontalVelocity.x = 0.0;
+    drone.horizontalVelocity.y = 0.0;
+    drone.horizontalVelocity.z = 0.0;
+    if (Math.abs(drone.verticalSpeed) > 0.0) {
+      drone.verticalSpeed = 0.0;
+    }
+  }
+
   function updateCamera() {
     Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
 
@@ -691,8 +782,34 @@ export function startSimulator(): void {
       );
       const wpTotal = activePlayground?.waypoints?.length ?? 0;
       const wpReached = result.waypointsReached.size;
+      const nextWaypoint = activePlayground
+        ? flightMetrics.getNextWaypoint(activePlayground.waypoints)
+        : null;
+      let nextWaypointText = "none";
+      if (nextWaypoint) {
+        const wpCartesian = Cesium.Cartesian3.fromDegrees(
+          nextWaypoint.position.lon,
+          nextWaypoint.position.lat,
+          nextWaypoint.position.height
+        );
+        const distanceMeters = Cesium.Cartesian3.distance(drone.position, wpCartesian);
+        nextWaypointText = `${nextWaypoint.id} (${distanceMeters.toFixed(0)}m)`;
+      } else if (wpTotal > 0) {
+        nextWaypointText = "complete";
+      }
+
+      const waypointMode = activePlayground?.waypointMode ?? "ordered";
       metricsEl.textContent =
-        `Collisions: ${result.collisionCount} | Waypoints: ${wpReached}/${wpTotal} | Score: ${result.score.toFixed(2)}`;
+        `Collisions: ${result.collisionCount} | Waypoints: ${wpReached}/${wpTotal} | Next: ${nextWaypointText} | Mode: ${waypointMode} | Score: ${result.score.toFixed(2)}`;
+
+      if (activePlayground) {
+        applyWaypointVisualState(
+          playgroundWaypointEntities,
+          activePlayground.waypoints,
+          activePlayground.waypointMode,
+          result.waypointsReached
+        );
+      }
     }
   }
 
@@ -715,27 +832,126 @@ export function startSimulator(): void {
     updateHorizontalAxes();
     updateWorldAxes();
     updateCamera();
+    // Reset swept-collision anchors so teleports are not treated as through-obstacle motion.
+    getDroneColliderCenter(drone.position, previousDroneColliderCenter);
+    Cesium.Cartesian3.clone(previousDroneColliderCenter, currentDroneColliderCenter);
+  }
+
+  function getDroneColliderCenter(position: any, out: any): any {
+    Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(position, scratch.surfaceNormal);
+    Cesium.Cartesian3.multiplyByScalar(
+      scratch.surfaceNormal,
+      DRONE_COLLIDER.centerUpOffset,
+      droneColliderOffsetScratch
+    );
+    Cesium.Cartesian3.add(position, droneColliderOffsetScratch, out);
+    return out;
+  }
+
+  function setDronePositionFromColliderCenter(colliderCenter: any): void {
+    Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(colliderCenter, scratch.surfaceNormal);
+    Cesium.Cartesian3.multiplyByScalar(
+      scratch.surfaceNormal,
+      DRONE_COLLIDER.centerUpOffset,
+      droneColliderOffsetScratch
+    );
+    Cesium.Cartesian3.subtract(colliderCenter, droneColliderOffsetScratch, drone.position);
+  }
+
+  function clearPlaygroundCollisionDebugEntities(): void {
+    if (!viewer) {
+      playgroundCollisionDebugEntities = [];
+      return;
+    }
+    for (const entity of playgroundCollisionDebugEntities) {
+      viewer.entities.remove(entity);
+    }
+    playgroundCollisionDebugEntities = [];
+  }
+
+  function rebuildPlaygroundCollisionDebugEntities(): void {
+    clearPlaygroundCollisionDebugEntities();
+    if (
+      !viewer ||
+      !activePlayground ||
+      !showObstacleCollisionBoxes ||
+      playgroundCollisionVolumes.length === 0
+    ) {
+      return;
+    }
+
+    let entityCount = 0;
+    for (const volume of playgroundCollisionVolumes) {
+      try {
+        const entities = createObstacleCollisionDebugEntities(volume);
+        for (const entity of entities) {
+          entity.show = true;
+          viewer.entities.add(entity);
+          playgroundCollisionDebugEntities.push(entity);
+          entityCount += 1;
+        }
+      } catch (error) {
+        console.error("[playground] obstacle collision debug build failed", {
+          volumeType: volume.type,
+          error,
+        });
+      }
+    }
+    console.log("[playground] obstacle collision debug entities", {
+      volumes: playgroundCollisionVolumes.length,
+      entities: entityCount,
+    });
+  }
+
+  function setObstacleCollisionBoxVisibility(show: boolean): void {
+    showObstacleCollisionBoxes = show;
+    if (!activePlayground) {
+      clearPlaygroundCollisionDebugEntities();
+      return;
+    }
+    if (showObstacleCollisionBoxes) {
+      rebuildPlaygroundCollisionDebugEntities();
+    } else {
+      clearPlaygroundCollisionDebugEntities();
+    }
   }
 
   function switchToPlayground(playground: Playground) {
-    unloadPlayground(viewer, playgroundObstacleEntities);
+    unloadPlayground(viewer, playgroundObstacleEntities, playgroundWaypointEntities);
     playgroundObstacleEntities = [];
+    playgroundWaypointEntities = [];
 
     const result = loadPlaygroundAssets(playground, viewer);
     playgroundObstacleEntities = result.obstacleEntities;
+    playgroundWaypointEntities = result.waypointEntities;
     viewer.terrainProvider = result.terrainProvider;
     if (googleTilesRef) googleTilesRef.show = false;
     if (osmBuildingsRef) osmBuildingsRef.show = false;
     activePlayground = playground;
+    playgroundCollisionVolumes = buildPlaygroundCollisionVolumes(playground.obstacles);
+    const collidableObstacleCount = playground.obstacles.filter((obs) => obs.collidable !== false).length;
+    console.log("[playground] collision volumes built", {
+      playground: playground.id,
+      obstacles: playground.obstacles.length,
+      collidableObstacles: collidableObstacleCount,
+      collisionVolumes: playgroundCollisionVolumes.length,
+    });
+    wasPlaygroundObstacleContact = false;
 
     teleportTo(playground.spawn);
-    flightMetrics.reset(playground.waypoints);
-    HUD.datasetStatus.textContent = `Playground: ${playground.name}`;
+    rebuildPlaygroundCollisionDebugEntities();
+    flightMetrics.reset(playground.waypoints, playground.waypointMode ?? "ordered");
+    const descriptionSuffix = playground.description ? ` | ${playground.description}` : "";
+    HUD.datasetStatus.textContent = `Playground: ${playground.name}${descriptionSuffix}`;
   }
 
   function switchToRealWorld() {
-    unloadPlayground(viewer, playgroundObstacleEntities);
+    unloadPlayground(viewer, playgroundObstacleEntities, playgroundWaypointEntities);
     playgroundObstacleEntities = [];
+    playgroundWaypointEntities = [];
+    clearPlaygroundCollisionDebugEntities();
+    playgroundCollisionVolumes = [];
+    wasPlaygroundObstacleContact = false;
     activePlayground = null;
 
     if (worldTerrainProvider) {
@@ -841,6 +1057,37 @@ export function startSimulator(): void {
         }
       });
     }
+
+    const obstacleCollisionToggle = document.getElementById(
+      "obstacle-collision-box-toggle",
+    ) as HTMLInputElement | null;
+    if (obstacleCollisionToggle) {
+      obstacleCollisionToggle.checked = false;
+      obstacleCollisionToggle.addEventListener("change", () => {
+        setObstacleCollisionBoxVisibility(obstacleCollisionToggle.checked);
+      });
+    }
+
+    const droneTransparentToggle = document.getElementById(
+      "drone-transparent-toggle",
+    ) as HTMLInputElement | null;
+    if (droneTransparentToggle) {
+      droneTransparentToggle.checked = false;
+      droneTransparentToggle.addEventListener("change", () => {
+        setDroneTransparency(droneTransparentToggle.checked);
+      });
+    }
+  }
+
+  function setDroneTransparency(enabled: boolean): void {
+    if (!droneEntity?.model) {
+      return;
+    }
+
+    const alpha = enabled ? 0.28 : 1.0;
+    droneEntity.model.color = Cesium.Color.WHITE.withAlpha(alpha);
+    droneEntity.model.colorBlendMode = Cesium.ColorBlendMode.MIX;
+    droneEntity.model.colorBlendAmount = enabled ? 0.7 : 0.0;
   }
 
   async function buildViewer() {
@@ -1098,6 +1345,7 @@ export function startSimulator(): void {
   function stepFrame(now: number): void {
     const dt = Math.min(0.033, Math.max(0.001, (now - lastTime) / 1000.0));
     lastTime = now;
+    getDroneColliderCenter(drone.position, previousDroneColliderCenter);
 
     flightMetrics.updatePosition(drone.position.x, drone.position.y, drone.position.z);
     if (activePlayground?.waypoints?.length) {
@@ -1121,6 +1369,10 @@ export function startSimulator(): void {
     updateDroneOrientation();
     updateWorldAxes();
     enforceBuildingCollision();
+    enforcePlaygroundObstacleCollision();
+    updateHorizontalAxes();     // ensure camera/axes use collision-resolved position
+    updateDroneOrientation();
+    updateWorldAxes();
     updateCamera();
     updateHudReadout();
 
@@ -1166,15 +1418,26 @@ export function startSimulator(): void {
           uri: "/assets/drone.glb",
           minimumPixelSize: 64,
           scale: 1.0,
+          color: Cesium.Color.WHITE,
+          colorBlendMode: Cesium.ColorBlendMode.MIX,
+          colorBlendAmount: 0.0,
         },
       });
 
       // Collision volume visualization (toggleable via UI checkbox).
       droneCollisionEntity = viewer.entities.add({
-        position: new Cesium.CallbackProperty(() => drone.position, false),
-        orientation: new Cesium.CallbackProperty(() => droneModelOrientation, false),
+        position: new Cesium.CallbackProperty(
+          () => getDroneColliderCenter(drone.position, droneColliderCenterScratch),
+          false
+        ),
+        // Use physical flight orientation instead of model heading correction.
+        orientation: new Cesium.CallbackProperty(() => drone.orientation, false),
         box: {
-          dimensions: new Cesium.Cartesian3(4.0, 4.0, 2.0),
+          dimensions: new Cesium.Cartesian3(
+            DRONE_COLLIDER.length,
+            DRONE_COLLIDER.width,
+            DRONE_COLLIDER.height
+          ),
           material: Cesium.Color.RED.withAlpha(0.15),
           outline: true,
           outlineColor: Cesium.Color.RED,
@@ -1224,4 +1487,441 @@ export function startSimulator(): void {
   }
 
   init();
+}
+
+type PlaygroundCollisionVolume =
+  | {
+      type: "box";
+      centerLonRad: number;
+      centerLatRad: number;
+      centerHeight: number;
+      cosLat: number;
+      headingSin: number;
+      headingCos: number;
+      halfLength: number;
+      halfWidth: number;
+      halfHeight: number;
+    }
+  | {
+      type: "cylinder";
+      centerLonRad: number;
+      centerLatRad: number;
+      centerHeight: number;
+      cosLat: number;
+      halfLength: number;
+      radius: number;
+    }
+  | {
+      type: "ring";
+      centerLonRad: number;
+      centerLatRad: number;
+      centerHeight: number;
+      cosLat: number;
+      innerRadius: number;
+      outerRadius: number;
+      halfThickness: number;
+    };
+
+const DRONE_COLLISION_HALF_LENGTH = DRONE_COLLIDER.length * 0.5;
+const DRONE_COLLISION_HALF_WIDTH = DRONE_COLLIDER.width * 0.5;
+const DRONE_COLLISION_HORIZONTAL_RADIUS = Math.max(
+  DRONE_COLLISION_HALF_LENGTH,
+  DRONE_COLLISION_HALF_WIDTH
+);
+const DRONE_COLLISION_VERTICAL_HALF_EXTENT = DRONE_COLLIDER.height * 0.5;
+const METERS_PER_RAD_LON_EQUATOR = 6378137.0;
+const METERS_PER_RAD_LAT = 6335439.0;
+
+function buildPlaygroundCollisionVolumes(obstacles: Obstacle[]): PlaygroundCollisionVolume[] {
+  const volumes: PlaygroundCollisionVolume[] = [];
+
+  for (const obstacle of obstacles) {
+    if (obstacle.collidable === false) {
+      continue;
+    }
+
+    const centerLonRad = Cesium.Math.toRadians(obstacle.position.lon);
+    const centerLatRad = Cesium.Math.toRadians(obstacle.position.lat);
+    const centerHeight = obstacle.position.height;
+    const cosLat = Math.max(1e-6, Math.cos(centerLatRad));
+
+    if (obstacle.type === "box") {
+      const headingRadians = Cesium.Math.toRadians(obstacle.heading ?? 0);
+      volumes.push({
+        type: "box",
+        centerLonRad,
+        centerLatRad,
+        centerHeight,
+        cosLat,
+        headingSin: Math.sin(headingRadians),
+        headingCos: Math.cos(headingRadians),
+        halfLength: obstacle.dimensions.length * 0.5,
+        halfWidth: obstacle.dimensions.width * 0.5,
+        halfHeight: obstacle.dimensions.height * 0.5,
+      });
+      continue;
+    }
+
+    if (obstacle.type === "cylinder") {
+      volumes.push({
+        type: "cylinder",
+        centerLonRad,
+        centerLatRad,
+        centerHeight,
+        cosLat,
+        halfLength: obstacle.length * 0.5,
+        radius: Math.max(obstacle.topRadius, obstacle.bottomRadius ?? obstacle.topRadius),
+      });
+      continue;
+    }
+
+    if (obstacle.type === "ring") {
+      volumes.push({
+        type: "ring",
+        centerLonRad,
+        centerLatRad,
+        centerHeight,
+        cosLat,
+        innerRadius: obstacle.innerRadius,
+        outerRadius: obstacle.outerRadius,
+        halfThickness: 0.6,
+      });
+    }
+  }
+
+  return volumes;
+}
+
+const COLLISION_DEBUG_FILL_COLOR = Cesium.Color.fromCssColorString("#19d7ff");
+const COLLISION_DEBUG_LINE_COLOR = Cesium.Color.fromCssColorString("#ff6a2a");
+
+function createObstacleCollisionDebugEntities(volume: PlaygroundCollisionVolume): any[] {
+  const center = Cesium.Cartesian3.fromRadians(
+    volume.centerLonRad,
+    volume.centerLatRad,
+    volume.centerHeight
+  );
+
+  if (volume.type === "box") {
+    const heading = Math.atan2(volume.headingSin, volume.headingCos);
+    const orientation = Cesium.Transforms.headingPitchRollQuaternion(
+      center,
+      new Cesium.HeadingPitchRoll(heading, 0, 0),
+      Cesium.Ellipsoid.WGS84,
+      Cesium.Transforms.eastNorthUpToFixedFrame
+    );
+
+    return [
+      new Cesium.Entity({
+        position: center,
+        orientation,
+        box: {
+          dimensions: new Cesium.Cartesian3(
+            (volume.halfLength + DRONE_COLLISION_HORIZONTAL_RADIUS) * 2,
+            (volume.halfWidth + DRONE_COLLISION_HORIZONTAL_RADIUS) * 2,
+            (volume.halfHeight + DRONE_COLLISION_VERTICAL_HALF_EXTENT) * 2
+          ),
+          material: COLLISION_DEBUG_FILL_COLOR.withAlpha(0.42),
+          outline: true,
+          outlineColor: COLLISION_DEBUG_LINE_COLOR.withAlpha(1.0),
+        },
+      }),
+    ];
+  }
+
+  if (volume.type === "cylinder") {
+    return [
+      new Cesium.Entity({
+        position: center,
+        cylinder: {
+          length: (volume.halfLength + DRONE_COLLISION_VERTICAL_HALF_EXTENT) * 2,
+          topRadius: volume.radius + DRONE_COLLISION_HORIZONTAL_RADIUS,
+          bottomRadius: volume.radius + DRONE_COLLISION_HORIZONTAL_RADIUS,
+          material: COLLISION_DEBUG_FILL_COLOR.withAlpha(0.42),
+          outline: true,
+          outlineColor: COLLISION_DEBUG_LINE_COLOR.withAlpha(1.0),
+        },
+      }),
+    ];
+  }
+
+  const outerRadius = volume.outerRadius + DRONE_COLLISION_HORIZONTAL_RADIUS;
+  const innerRadius = Math.max(0, volume.innerRadius - DRONE_COLLISION_HORIZONTAL_RADIUS);
+  const halfThickness = volume.halfThickness + DRONE_COLLISION_VERTICAL_HALF_EXTENT;
+  const hierarchy = createRingHierarchy(center, innerRadius, outerRadius);
+
+  return [
+    new Cesium.Entity({
+      position: center,
+      polygon: {
+        hierarchy,
+        height: volume.centerHeight - halfThickness,
+        extrudedHeight: volume.centerHeight + halfThickness,
+        material: COLLISION_DEBUG_FILL_COLOR.withAlpha(0.42),
+        outline: true,
+        outlineColor: COLLISION_DEBUG_LINE_COLOR.withAlpha(1.0),
+      },
+    }),
+  ];
+}
+
+function createRingHierarchy(
+  center: any,
+  innerRadius: number,
+  outerRadius: number
+): any {
+  const segments = 48;
+  const transform = Cesium.Transforms.eastNorthUpToFixedFrame(
+    center,
+    Cesium.Ellipsoid.WGS84,
+    new Cesium.Matrix4()
+  );
+  const outerPositions: any[] = [];
+  const innerPositions: any[] = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+
+    const outer = new Cesium.Cartesian3(cosA * outerRadius, sinA * outerRadius, 0);
+    const inner = new Cesium.Cartesian3(cosA * innerRadius, sinA * innerRadius, 0);
+    Cesium.Matrix4.multiplyByPoint(transform, outer, outer);
+    Cesium.Matrix4.multiplyByPoint(transform, inner, inner);
+    outerPositions.push(outer);
+    innerPositions.push(inner);
+  }
+
+  if (innerRadius < 0.05) {
+    return new Cesium.PolygonHierarchy(outerPositions);
+  }
+
+  return new Cesium.PolygonHierarchy(outerPositions, [
+    new Cesium.PolygonHierarchy(innerPositions.reverse()),
+  ]);
+}
+
+function isDroneInsideCollisionVolume(
+  dronePosition: any,
+  volume: PlaygroundCollisionVolume,
+  scratchPoint: any
+): boolean {
+  const cartographic = Cesium.Cartographic.fromCartesian(
+    dronePosition,
+    Cesium.Ellipsoid.WGS84,
+    new Cesium.Cartographic()
+  );
+  return isGeodeticInsideCollisionVolume(
+    cartographic.longitude,
+    cartographic.latitude,
+    cartographic.height,
+    volume,
+    scratchPoint
+  );
+}
+
+function samplePlaygroundCollisionAlongMotion(
+  fromPosition: any,
+  toPosition: any,
+  volumes: PlaygroundCollisionVolume[],
+  localScratch: any,
+  safeScratch: any
+): PlaygroundCollisionVolume | null {
+  const fromCartographic = Cesium.Cartographic.fromCartesian(
+    fromPosition,
+    Cesium.Ellipsoid.WGS84,
+    new Cesium.Cartographic()
+  );
+  const toCartographic = Cesium.Cartographic.fromCartesian(
+    toPosition,
+    Cesium.Ellipsoid.WGS84,
+    new Cesium.Cartographic()
+  );
+
+  const distance = Cesium.Cartesian3.distance(fromPosition, toPosition);
+  // Swept sampling prevents tunneling through thin obstacle geometry at high speed.
+  const stepMeters = Math.max(0.5, DRONE_COLLISION_HORIZONTAL_RADIUS * 0.5);
+  const samples = Math.max(1, Math.ceil(distance / stepMeters));
+
+  for (let i = 1; i <= samples; i++) {
+    const t = i / samples;
+    const lon = Cesium.Math.lerp(fromCartographic.longitude, toCartographic.longitude, t);
+    const lat = Cesium.Math.lerp(fromCartographic.latitude, toCartographic.latitude, t);
+    const height = Cesium.Math.lerp(fromCartographic.height, toCartographic.height, t);
+    for (const volume of volumes) {
+      if (!isGeodeticInsideCollisionVolume(lon, lat, height, volume, localScratch)) {
+        continue;
+      }
+      const safeT = Math.max(0, (i - 1) / samples);
+      const safeLon = Cesium.Math.lerp(fromCartographic.longitude, toCartographic.longitude, safeT);
+      const safeLat = Cesium.Math.lerp(fromCartographic.latitude, toCartographic.latitude, safeT);
+      const safeHeight = Cesium.Math.lerp(fromCartographic.height, toCartographic.height, safeT);
+      Cesium.Cartesian3.fromRadians(
+        safeLon,
+        safeLat,
+        safeHeight,
+        Cesium.Ellipsoid.WGS84,
+        safeScratch
+      );
+      return volume;
+    }
+  }
+
+  Cesium.Cartesian3.clone(toPosition, safeScratch);
+  return null;
+}
+
+function pushDroneOutOfCollisionVolume(
+  dronePosition: any,
+  volume: PlaygroundCollisionVolume,
+  localScratch: any,
+  worldScratch: any
+): void {
+  const cartographic = Cesium.Cartographic.fromCartesian(
+    dronePosition,
+    Cesium.Ellipsoid.WGS84,
+    new Cesium.Cartographic()
+  );
+  isGeodeticInsideCollisionVolume(
+    cartographic.longitude,
+    cartographic.latitude,
+    cartographic.height,
+    volume,
+    localScratch
+  );
+  const epsilon = 0.08;
+
+  if (volume.type === "box") {
+    const limitX = volume.halfLength + DRONE_COLLISION_HORIZONTAL_RADIUS + epsilon;
+    const limitY = volume.halfWidth + DRONE_COLLISION_HORIZONTAL_RADIUS + epsilon;
+    const limitZ = volume.halfHeight + DRONE_COLLISION_VERTICAL_HALF_EXTENT + epsilon;
+
+    const overlapX = limitX - Math.abs(localScratch.x);
+    const overlapY = limitY - Math.abs(localScratch.y);
+    const overlapZ = limitZ - Math.abs(localScratch.z);
+
+    if (overlapX <= overlapY && overlapX <= overlapZ) {
+      localScratch.x = (localScratch.x >= 0 ? 1 : -1) * limitX;
+    } else if (overlapY <= overlapX && overlapY <= overlapZ) {
+      localScratch.y = (localScratch.y >= 0 ? 1 : -1) * limitY;
+    } else {
+      localScratch.z = (localScratch.z >= 0 ? 1 : -1) * limitZ;
+    }
+  } else if (volume.type === "cylinder") {
+    const limitR = volume.radius + DRONE_COLLISION_HORIZONTAL_RADIUS + epsilon;
+    const limitZ = volume.halfLength + DRONE_COLLISION_VERTICAL_HALF_EXTENT + epsilon;
+    const radial = Math.sqrt(localScratch.x * localScratch.x + localScratch.y * localScratch.y);
+    const overlapRadial = limitR - radial;
+    const overlapZ = limitZ - Math.abs(localScratch.z);
+
+    if (overlapZ < overlapRadial) {
+      localScratch.z = (localScratch.z >= 0 ? 1 : -1) * limitZ;
+    } else if (radial < 1e-6) {
+      localScratch.x = limitR;
+      localScratch.y = 0;
+    } else {
+      const scale = limitR / radial;
+      localScratch.x *= scale;
+      localScratch.y *= scale;
+    }
+  } else {
+    const radial = Math.sqrt(localScratch.x * localScratch.x + localScratch.y * localScratch.y);
+    const holeSafeRadius = Math.max(0, volume.innerRadius - DRONE_COLLISION_HORIZONTAL_RADIUS);
+    const frameRadius = volume.outerRadius + DRONE_COLLISION_HORIZONTAL_RADIUS;
+    const innerEscape = Math.max(0, holeSafeRadius - epsilon);
+    const outerEscape = frameRadius + epsilon;
+    const zEscape = volume.halfThickness + DRONE_COLLISION_VERTICAL_HALF_EXTENT + epsilon;
+
+    const overlapInner = radial - innerEscape;
+    const overlapOuter = outerEscape - radial;
+    const overlapZ = zEscape - Math.abs(localScratch.z);
+
+    if (overlapZ <= overlapInner && overlapZ <= overlapOuter) {
+      localScratch.z = (localScratch.z >= 0 ? 1 : -1) * zEscape;
+    } else if (overlapInner <= overlapOuter) {
+      if (radial < 1e-6) {
+        localScratch.x = innerEscape;
+        localScratch.y = 0;
+      } else {
+        const scale = innerEscape / radial;
+        localScratch.x *= scale;
+        localScratch.y *= scale;
+      }
+    } else if (radial < 1e-6) {
+      localScratch.x = outerEscape;
+      localScratch.y = 0;
+    } else {
+      const scale = outerEscape / radial;
+      localScratch.x *= scale;
+      localScratch.y *= scale;
+    }
+  }
+
+  let eastMeters = localScratch.x;
+  let northMeters = localScratch.y;
+  if (volume.type === "box") {
+    eastMeters = volume.headingCos * localScratch.x - volume.headingSin * localScratch.y;
+    northMeters = volume.headingSin * localScratch.x + volume.headingCos * localScratch.y;
+  }
+  const lon =
+    volume.centerLonRad + eastMeters / (METERS_PER_RAD_LON_EQUATOR * volume.cosLat);
+  const lat = volume.centerLatRad + northMeters / METERS_PER_RAD_LAT;
+  const height = volume.centerHeight + localScratch.z;
+
+  Cesium.Cartesian3.fromRadians(
+    lon,
+    lat,
+    height,
+    Cesium.Ellipsoid.WGS84,
+    worldScratch
+  );
+  Cesium.Cartesian3.clone(worldScratch, dronePosition);
+}
+
+function isGeodeticInsideCollisionVolume(
+  lonRad: number,
+  latRad: number,
+  height: number,
+  volume: PlaygroundCollisionVolume,
+  localScratch: any
+): boolean {
+  const dEast = (lonRad - volume.centerLonRad) * METERS_PER_RAD_LON_EQUATOR * volume.cosLat;
+  const dNorth = (latRad - volume.centerLatRad) * METERS_PER_RAD_LAT;
+  const dUp = height - volume.centerHeight;
+
+  if (volume.type === "box") {
+    localScratch.x = volume.headingCos * dEast + volume.headingSin * dNorth;
+    localScratch.y = -volume.headingSin * dEast + volume.headingCos * dNorth;
+  } else {
+    localScratch.x = dEast;
+    localScratch.y = dNorth;
+  }
+  localScratch.z = dUp;
+
+  const lx = localScratch.x;
+  const ly = localScratch.y;
+  const lz = localScratch.z;
+
+  if (volume.type === "box") {
+    return (
+      Math.abs(lx) <= volume.halfLength + DRONE_COLLISION_HORIZONTAL_RADIUS &&
+      Math.abs(ly) <= volume.halfWidth + DRONE_COLLISION_HORIZONTAL_RADIUS &&
+      Math.abs(lz) <= volume.halfHeight + DRONE_COLLISION_VERTICAL_HALF_EXTENT
+    );
+  }
+
+  if (volume.type === "cylinder") {
+    const radial = Math.sqrt(lx * lx + ly * ly);
+    return (
+      radial <= volume.radius + DRONE_COLLISION_HORIZONTAL_RADIUS &&
+      Math.abs(lz) <= volume.halfLength + DRONE_COLLISION_VERTICAL_HALF_EXTENT
+    );
+  }
+
+  const radial = Math.sqrt(lx * lx + ly * ly);
+  const holeSafeRadius = Math.max(0, volume.innerRadius - DRONE_COLLISION_HORIZONTAL_RADIUS);
+  const frameRadius = volume.outerRadius + DRONE_COLLISION_HORIZONTAL_RADIUS;
+  const withinThickness =
+    Math.abs(lz) <= volume.halfThickness + DRONE_COLLISION_VERTICAL_HALF_EXTENT;
+  return withinThickness && radial >= holeSafeRadius && radial <= frameRadius;
 }
