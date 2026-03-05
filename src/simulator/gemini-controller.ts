@@ -66,6 +66,10 @@ export class GeminiController {
     this.stop();
   }
 
+  isRunning(): boolean {
+    return this.active;
+  }
+
   stop(): void {
     if (this.cycleTimeout) {
       window.clearTimeout(this.cycleTimeout);

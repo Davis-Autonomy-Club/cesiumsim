@@ -1,3 +1,4 @@
+import { showMissionToast } from "../../hud";
 import type { MissionTarget, ZoneThreshold } from "./types";
 
 export interface MissionMetricsResult {
@@ -136,6 +137,7 @@ export class MissionFlightMetrics {
           if (target.id === "wp1" && !this.wp1Reached) {
             this.wp1Reached = true;
             this.wp1Time = elapsed;
+            showMissionToast("Team 1 Reached");
           }
           if (target.id === "wp2" && !this.wp2Reached) {
             this.wp2Reached = true;
@@ -172,6 +174,10 @@ export class MissionFlightMetrics {
 
   // Used by BenchmarkRunner to check if the mission is complete
   isComplete(missionType: string): boolean {
+    // For B1 and B2, mission ends on ANY collision if near target, 
+    // but the user said "mission should end as soon as the drone sort of collides with the firefighter block"
+    // We'll handle the specific collision-with-target in simulator-app.ts 
+    // and just report completion here.
     switch (missionType) {
       case "supply-drop": return this.correctTargetReached !== "neither";
       case "altitude-climb": return this.ascentAttempted && this.maxAltitude >= this.ascentThreshold;

@@ -7,6 +7,20 @@ export type HudElements = {
   position: HTMLElement;
   datasetStatus: HTMLElement;
   flightStatus: HTMLElement;
+  benchmarkRunner: HTMLElement;
+  runBenchmarkBtn: HTMLButtonElement;
+  benchmarkMaxTime: HTMLInputElement;
+  missionToast: HTMLElement;
+  runBatchBtn: HTMLButtonElement;
+  addTrialBtn: HTMLButtonElement;
+  startBatchBtn: HTMLButtonElement;
+  batchSetupContainer: HTMLElement;
+  batchTrialsTable: HTMLTableElement;
+  batchResultsDialog: HTMLElement;
+  batchResultsTable: HTMLTableElement;
+  exportXlsxBtn: HTMLButtonElement;
+  batchCloseBtn: HTMLButtonElement;
+  batchAutoProceed: HTMLInputElement;
 };
 
 export type FpvOverlayElements = {
@@ -33,6 +47,20 @@ export function getHudElements(): HudElements {
     position: getRequiredElement("hud-position"),
     datasetStatus: getRequiredElement("dataset-status"),
     flightStatus: getRequiredElement("flight-status"),
+    benchmarkRunner: getRequiredElement("benchmark-runner-panel"),
+    runBenchmarkBtn: getRequiredElement("run-benchmark-btn") as HTMLButtonElement,
+    benchmarkMaxTime: getRequiredElement("benchmark-max-time") as HTMLInputElement,
+    missionToast: getRequiredElement("mission-toast"),
+    runBatchBtn: getRequiredElement("run-benchmark-batch-btn") as HTMLButtonElement,
+    addTrialBtn: getRequiredElement("add-trial-btn") as HTMLButtonElement,
+    startBatchBtn: getRequiredElement("start-batch-btn") as HTMLButtonElement,
+    batchSetupContainer: getRequiredElement("batch-setup-container"),
+    batchTrialsTable: getRequiredElement("batch-trials-table") as HTMLTableElement,
+    batchResultsDialog: getRequiredElement("batch-results-dialog"),
+    batchResultsTable: getRequiredElement("batch-results-table") as HTMLTableElement,
+    exportXlsxBtn: getRequiredElement("export-xlsx-btn") as HTMLButtonElement,
+    batchCloseBtn: getRequiredElement("batch-close-btn") as HTMLButtonElement,
+    batchAutoProceed: getRequiredElement("batch-auto-proceed") as HTMLInputElement,
   };
 }
 
@@ -230,13 +258,34 @@ export function createCollisionDialog(): HTMLDivElement {
   reloadBtn.onclick = () => { window.location.reload(); };
   overlay.appendChild(reloadBtn);
 
+  const nextBtn = document.createElement("button");
+  nextBtn.id = "collision-next-btn";
+  nextBtn.textContent = "NEXT TRIAL";
+  nextBtn.style.cssText = `
+    margin-top: 0.5rem;
+    padding: 0.8rem 1.5rem;
+    background: #4ade80;
+    color: #02050a;
+    border: none;
+    font-family: 'Space Mono', monospace;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.2s;
+    letter-spacing: 0.1em;
+    display: none;
+  `;
+  nextBtn.onmouseover = () => { nextBtn.style.background = "#5bff91"; };
+  nextBtn.onmouseout = () => { nextBtn.style.background = "#4ade80"; };
+  overlay.appendChild(nextBtn);
+
   document.body.appendChild(overlay);
   return overlay;
 }
 
 export function showCollisionDialog(
   overlay: HTMLDivElement,
-  data: { time: string; object: string; distanceToGoal: string }
+  data: { time: string; object: string; distanceToGoal: string },
+  onNext?: () => void
 ): void {
   const stats = overlay.querySelector("#collision-stats");
   if (stats) {
@@ -246,5 +295,131 @@ export function showCollisionDialog(
       <div>=> Distance from goal: ${data.distanceToGoal}</div>
     `;
   }
+
+  const reloadBtn = overlay.querySelector("#collision-reload-btn") as HTMLElement;
+  const nextBtn = overlay.querySelector("#collision-next-btn") as HTMLElement;
+
+  if (onNext) {
+    if (reloadBtn) reloadBtn.style.display = "none";
+    if (nextBtn) {
+      nextBtn.style.display = "block";
+      nextBtn.onclick = () => {
+        overlay.style.display = "none";
+        onNext();
+      };
+    }
+  } else {
+    if (reloadBtn) reloadBtn.style.display = "block";
+    if (nextBtn) nextBtn.style.display = "none";
+  }
+
   overlay.style.display = "flex";
+}
+
+export function showMissionToast(text: string): void {
+  const toast = document.getElementById("mission-toast");
+  if (toast) {
+    toast.textContent = text;
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 4000);
+  }
+}
+
+export function showBenchmarkResults(
+  title: string,
+  metrics: any,
+  scenarioId: string,
+  onNext?: () => void
+): void {
+  const dialog = document.getElementById("benchmark-results-dialog");
+  const content = document.getElementById("benchmark-metrics-content");
+  const titleEl = document.getElementById("benchmark-results-title");
+  const closeBtn = document.getElementById("benchmark-close-btn");
+
+  if (!dialog || !content || !titleEl || !closeBtn) return;
+
+  titleEl.textContent = title;
+
+  let html = `<div class="metric-row"><span class="metric-label">Time Taken</span><span class="metric-value">${metrics.timeToCompletionS}s</span></div>`;
+  html += `<div class="metric-row"><span class="metric-label">Collisions</span><span class="metric-value">${metrics.collisionCount}</span></div>`;
+
+  if (scenarioId === "mission-forest-supply-drop") {
+    html += `<div class="metric-row"><span class="metric-label">Zone Progression</span><span class="metric-value">${metrics.zoneProgression}</span></div>`;
+  } else if (scenarioId === "mission-canyon-terrain") {
+    html += `<div class="metric-row"><span class="metric-label">Max Altitude</span><span class="metric-value">${metrics.maxAltitudeM}m</span></div>`;
+    html += `<div class="metric-row"><span class="metric-label">Ascent Attempted</span><span class="metric-value">${metrics.ascentAttempted ? "Yes" : "No"}</span></div>`;
+    html += `<div class="metric-row"><span class="metric-label">Final Altitude</span><span class="metric-value">${metrics.altitudeAtCompletion}m</span></div>`;
+  } else if (scenarioId === "mission-firefighter-id") {
+    html += `<div class="metric-row"><span class="metric-label">Correct Target</span><span class="metric-value">${metrics.correctTargetReached}</span></div>`;
+    html += `<div class="metric-row"><span class="metric-label">Wrong Target Approach</span><span class="metric-value">${metrics.wrongTargetApproached ? "Yes" : "No"}</span></div>`;
+  } else if (scenarioId === "mission-multistop-delivery") {
+    html += `<div class="metric-row"><span class="metric-label">Waypoint 1</span><span class="metric-value">${metrics.waypoint1Reached ? "Reached" : "Missed"}</span></div>`;
+    html += `<div class="metric-row"><span class="metric-label">Waypoint 2</span><span class="metric-value">${metrics.waypoint2Reached ? "Reached" : "Missed"}</span></div>`;
+    html += `<div class="metric-row"><span class="metric-label">Correct Sequence</span><span class="metric-value">${metrics.correctSequence ? "Yes" : "No"}</span></div>`;
+    if (metrics.timeToWaypoint1S) {
+      html += `<div class="metric-row"><span class="metric-label">Split (WP1)</span><span class="metric-value">${metrics.timeToWaypoint1S}s</span></div>`;
+    }
+  }
+
+  content.innerHTML = html;
+  dialog.style.display = "flex";
+
+  if (onNext) {
+    closeBtn.textContent = "Next Trial";
+    closeBtn.style.background = "#4ade80";
+    closeBtn.style.color = "#02050a";
+    closeBtn.onclick = () => {
+      dialog.style.display = "none";
+      onNext();
+    };
+  } else {
+    closeBtn.textContent = "Dismiss";
+    closeBtn.style.background = ""; // Reset to CSS default
+    closeBtn.style.color = "";
+    closeBtn.onclick = () => {
+      dialog.style.display = "none";
+    };
+  }
+}
+
+export function showBatchResults(
+  hud: HudElements,
+  results: any[]
+): void {
+  const tableBody = hud.batchResultsTable.querySelector("tbody");
+  if (!tableBody) return;
+
+  tableBody.innerHTML = "";
+
+  results.forEach(res => {
+    const row = document.createElement("tr");
+
+    // Determine the primary metric based on scenario
+    let metricValue = "N/A";
+    if (res.metrics.zoneProgression) metricValue = res.metrics.zoneProgression;
+    else if (res.metrics.maxAltitudeM) metricValue = `${res.metrics.maxAltitudeM.toFixed(1)}m`;
+    else if (res.metrics.correctTargetReached) metricValue = res.metrics.correctTargetReached;
+    else if (res.metrics.waypoint2Reached !== undefined) metricValue = res.metrics.waypoint2Reached ? "WP2 Done" : (res.metrics.waypoint1Reached ? "WP1 Done" : "None");
+
+    const successClass = res.success ? "status-yes" : "status-no";
+    const successText = res.success ? "Yes" : "No";
+
+    row.innerHTML = `
+      <td>${res.trialName}</td>
+      <td>${res.timeRequirement}s</td>
+      <td class="${successClass}">${successText}</td>
+      <td>${res.actualTime.toFixed(1)}s</td>
+      <td style="color: #aaa; font-size: 0.7rem;">${res.reason || ""}</td>
+      <td>${res.distanceToGoal || "N/A"}</td>
+      <td>${res.metrics.collisionCount}</td>
+      <td style="font-weight: bold;">${metricValue}</td>
+    `;
+    tableBody.appendChild(row);
+  });
+
+  hud.batchResultsDialog.style.display = "flex";
+
+  hud.batchCloseBtn.onclick = () => {
+    hud.batchResultsDialog.style.display = "none";
+  };
 }

@@ -14,7 +14,7 @@ export function loadPlayground(
   const obstacleEntities: any[] = [];
 
   for (const obs of playground.obstacles) {
-    const entities = createObstacleEntity(obs);
+    const entities = createObstacleEntity(obs, playground);
     for (const entity of entities) {
       viewer.entities.add(entity);
       obstacleEntities.push(entity);
@@ -42,7 +42,7 @@ export function unloadPlayground(
   }
 }
 
-function createObstacleEntity(obs: Obstacle): any[] {
+function createObstacleEntity(obs: Obstacle, playground?: Playground): any[] {
   const entities: any[] = [];
 
   const position = Cesium.Cartesian3.fromDegrees(
@@ -153,13 +153,35 @@ function createObstacleEntity(obs: Obstacle): any[] {
 
   else if (obs.type === "tree") {
     // Trunk
+    let trunkMaterial = Cesium.Color.fromBytes(89, 63, 40, 230); // brown fallback
+
+    // B1 Zone Coloring
+    if (playground && playground.id === "mission-forest-supply-drop" && playground.zoneThresholds) {
+      const lon = obs.position.lon;
+      // Zone 1: Yellow, Zone 2: Green, Zone 3: Red (based on user request: "red green and yellow")
+      // User said: "make those zones red green and yellow... tree barks colored as per hte zone"
+      // Standard progression: Zone 1 -> Zone 2 -> Zone 3
+      // We'll map: Zone 1 (yellow), Zone 2 (green), Zone 3 (red)
+      const zone1 = playground.zoneThresholds.find(z => z.id === "zone1")?.minLon ?? -Infinity;
+      const zone2 = playground.zoneThresholds.find(z => z.id === "zone2")?.minLon ?? -Infinity;
+      const zone3 = playground.zoneThresholds.find(z => z.id === "zone3")?.minLon ?? -Infinity;
+
+      if (lon >= zone3) {
+        trunkMaterial = Cesium.Color.fromBytes(255, 50, 50, 255); // Red
+      } else if (lon >= zone2) {
+        trunkMaterial = Cesium.Color.fromBytes(50, 255, 50, 255); // Green
+      } else if (lon >= zone1) {
+        trunkMaterial = Cesium.Color.fromBytes(255, 230, 50, 255); // Yellow
+      }
+    }
+
     entities.push(new Cesium.Entity({
       position: Cesium.Cartesian3.fromDegrees(obs.position.lon, obs.position.lat, obs.position.height + obs.trunkHeight / 2),
       cylinder: {
         length: obs.trunkHeight,
         topRadius: obs.trunkRadius,
         bottomRadius: obs.trunkRadius,
-        material: Cesium.Color.fromBytes(89, 63, 40, 230),  // brown
+        material: trunkMaterial,
       },
     }));
 

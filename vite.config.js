@@ -4,6 +4,7 @@ export default defineConfig({
   server: {
     port: 4173,
     open: true,
+    allowedHosts: ['glynis-trilobed-nonconnectively.ngrok-free.dev'],
   },
   build: {
     outDir: 'dist',

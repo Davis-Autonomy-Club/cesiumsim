@@ -42,6 +42,9 @@ import {
   getHudElements,
   setFlightStatus,
   updateSpeedTierHud,
+  showBenchmarkResults,
+  showBatchResults,
+  showMissionToast,
 } from "./hud";
 
 export function startSimulator(): void {
@@ -831,6 +834,66 @@ export function startSimulator(): void {
     HUD.datasetStatus.textContent = "Cesium World Terrain + 3D Tiles";
   }
 
+  async function runSingleTrial(name: string, timeRequirement: number): Promise<any> {
+    return new Promise((resolve) => {
+      if (!activeMissionPlayground) return resolve(null);
+
+      const missionWithLimit = { ...activeMissionPlayground, timeLimit: timeRequirement };
+      switchToMission(missionWithLimit);
+
+      // Auto-start Gemini
+      if (!geminiController.isRunning()) {
+        geminiController.toggle();
+      }
+
+      // We need to wait for missionBenchmarkRunner to signal completion
+      (window as any).proceedToNextTrial = false;
+      const checkInterval = setInterval(() => {
+        const finished = !missionBenchmarkRunner || !missionBenchmarkRunner.isRunning();
+        const approved = (window as any).proceedToNextTrial;
+
+        if (finished && approved) {
+          clearInterval(checkInterval);
+          (window as any).proceedToNextTrial = false;
+
+          // Capture the last result
+          const lastMetrics = flightMetrics.getResult(timeRequirement, (lon, lat, h) => {
+            const c = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+            return { x: c.x, y: c.y, z: c.z };
+          });
+
+          // Calculate distance to goal at finish
+          let distGoal = "N/A";
+          if (activeMissionPlayground && activeMissionPlayground.missionTargets.length > 0) {
+            const target = activeMissionPlayground.missionTargets[0];
+            const targetCart = Cesium.Cartesian3.fromDegrees(target.position.lon, target.position.lat, target.position.height);
+            const d = Cesium.Cartesian3.distance(drone.position, targetCart);
+            distGoal = d.toFixed(1) + "m";
+          }
+
+          // Determine success/reason
+          // This is a bit tricky as the result is cleared when runner stops.
+          // In simulator-app.ts tick, we show results modal but for batch we just collect.
+          // I will modify the completion logic in tick to handle batching.
+
+          // For now, let's assume we captured it in a global or similar.
+          // Better: return the data directly from the orchestrator.
+
+          const finalResult = (window as any).lastTrialResult;
+          resolve({
+            trialName: name,
+            timeRequirement: timeRequirement,
+            success: finalResult?.metrics.correctTargetReached === "correct" || finalResult?.metrics.zoneProgression === "Zone 3",
+            actualTime: finalResult?.timeToCompletionS || 0,
+            reason: finalResult?.reason || "Condition not met",
+            distanceToGoal: distGoal,
+            metrics: finalResult?.metrics || lastMetrics
+          });
+        }
+      }, 500);
+    });
+  }
+
   const geminiController = new GeminiController({
     getViewer: () => viewer,
     keyState,
@@ -955,6 +1018,129 @@ export function startSimulator(): void {
         }
       });
     }
+
+    // Benchmark Runner handlers
+    HUD.runBenchmarkBtn.addEventListener("click", () => {
+      if (!activeMissionPlayground) {
+        alert("Please select a benchmark environment (B1-B4) first.");
+        return;
+      }
+
+      if (missionBenchmarkRunner && missionBenchmarkRunner.isRunning()) {
+        missionBenchmarkRunner.stop();
+        geminiController.stop();
+        HUD.runBenchmarkBtn.textContent = "Run Benchmark";
+        return;
+      }
+
+      const maxTime = parseInt(HUD.benchmarkMaxTime.value, 10) || 30;
+
+      // Override mission time limit for the runner
+      const missionWithLimit = { ...activeMissionPlayground, timeLimit: maxTime };
+
+      switchToMission(missionWithLimit);
+
+      // Start Gemini
+      geminiController.toggle();
+      HUD.runBenchmarkBtn.textContent = "Stop Benchmark";
+    });
+
+    // Batch Runner Toggle
+    HUD.runBatchBtn.addEventListener("click", () => {
+      const isVisible = HUD.batchSetupContainer.style.display === "block";
+      HUD.batchSetupContainer.style.display = isVisible ? "none" : "block";
+    });
+
+    // Add Trial Row
+    HUD.addTrialBtn.addEventListener("click", () => {
+      const tbody = HUD.batchTrialsTable.querySelector("tbody");
+      if (!tbody) return;
+
+      const trialIndex = tbody.children.length + 1;
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td style="padding: 0.2rem;"><input type="text" class="batch-trial-input trial-name" value="Trial ${trialIndex}"></td>
+        <td style="padding: 0.2rem;"><input type="number" class="batch-trial-input trial-time" value="30"></td>
+        <td style="padding: 0.2rem;"><button class="remove-trial-btn">&times;</button></td>
+      `;
+
+      row.querySelector(".remove-trial-btn")?.addEventListener("click", () => row.remove());
+      tbody.appendChild(row);
+    });
+
+    // Start Batch
+    HUD.startBatchBtn.addEventListener("click", async () => {
+      if (!activeMissionPlayground) {
+        alert("Please select a benchmark environment (B1-B4) first.");
+        return;
+      }
+
+      const tbody = HUD.batchTrialsTable.querySelector("tbody");
+      const rows = tbody?.querySelectorAll("tr");
+      if (!rows || rows.length === 0) {
+        alert("Please add at least one trial.");
+        return;
+      }
+
+      const trials = Array.from(rows).map(row => ({
+        name: (row.querySelector(".trial-name") as HTMLInputElement).value,
+        timeRequirement: parseInt((row.querySelector(".trial-time") as HTMLInputElement).value, 10) || 30
+      }));
+
+      HUD.startBatchBtn.disabled = true;
+      HUD.startBatchBtn.textContent = "Running Batch...";
+
+      const batchResults: any[] = [];
+
+      for (let i = 0; i < trials.length; i++) {
+        const trial = trials[i];
+        HUD.startBatchBtn.textContent = `Running ${trial.name} (${i + 1}/${trials.length})`;
+
+        const result = await runSingleTrial(trial.name, trial.timeRequirement);
+        batchResults.push(result);
+      }
+
+      HUD.startBatchBtn.disabled = false;
+      HUD.startBatchBtn.textContent = "Start Batch";
+
+      showBatchResults(HUD, batchResults);
+
+      // Store results for export
+      (window as any).lastBatchResults = batchResults;
+    });
+
+    // Export XLSX
+    HUD.exportXlsxBtn.addEventListener("click", () => {
+      const results = (window as any).lastBatchResults;
+      const XLSX = (window as any).XLSX;
+      if (!results || !XLSX) return;
+
+      const data = results.map(res => {
+        const rowData: any = {
+          "Trial": res.trialName,
+          "Time Requirement": res.timeRequirement,
+          "Success": res.success ? "Yes" : "No",
+          "Time": res.actualTime.toFixed(1),
+          "Reason": res.reason || "",
+          "Distance to Goal": res.distanceToGoal || "N/A",
+          "Collisions": res.metrics.collisionCount
+        };
+
+        // Add scenario-specific metrics
+        if (res.metrics.zoneProgression) rowData["Zone Progression"] = res.metrics.zoneProgression;
+        if (res.metrics.maxAltitudeM) rowData["Max Altitude"] = res.metrics.maxAltitudeM.toFixed(1);
+        if (res.metrics.correctTargetReached) rowData["Correct Target"] = res.metrics.correctTargetReached;
+        if (res.metrics.waypoint1Reached !== undefined) rowData["WP1 Reached"] = res.metrics.waypoint1Reached ? "Yes" : "No";
+        if (res.metrics.waypoint2Reached !== undefined) rowData["WP2 Reached"] = res.metrics.waypoint2Reached ? "Yes" : "No";
+
+        return rowData;
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(data);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Batch Results");
+      XLSX.writeFile(workbook, `Benchmark_Batch_${new Date().getTime()}.xlsx`);
+    });
   }
 
   async function buildViewer() {
@@ -1224,6 +1410,38 @@ export function startSimulator(): void {
       const tickResult = missionBenchmarkRunner.tick(dt);
       if (tickResult.done && tickResult.result) {
         console.log("[mission] Complete:", tickResult.result);
+
+        // Store for batch runner capture
+        (window as any).lastTrialResult = tickResult.result;
+
+        // Stop Gemini when mission ends
+        geminiController.stop();
+        HUD.runBenchmarkBtn.textContent = "Run Benchmark";
+
+        // Show results dialog ONLY if NOT in batch mode (or wait for approval)
+        const isBatch = HUD.startBatchBtn.disabled; // Start Batch is disabled while running
+        const autoProceed = HUD.batchAutoProceed.checked;
+
+        if (isBatch) {
+          if (!autoProceed) {
+            showBenchmarkResults(
+              activeMissionPlayground?.name ?? "Benchmark Results",
+              tickResult.result.metrics,
+              activeMissionPlayground?.id ?? "",
+              () => { (window as any).proceedToNextTrial = true; }
+            );
+          } else {
+            // Auto-proceed: just wait a bit and move on
+            setTimeout(() => { (window as any).proceedToNextTrial = true; }, 1500);
+          }
+        } else {
+          showBenchmarkResults(
+            activeMissionPlayground?.name ?? "Benchmark Results",
+            tickResult.result.metrics,
+            activeMissionPlayground?.id ?? ""
+          );
+        }
+
         missionBenchmarkRunner = null;
       }
     }
@@ -1371,11 +1589,43 @@ export function startSimulator(): void {
       distGoal = d.toFixed(1) + "m";
     }
 
+    const isBatch = HUD.startBatchBtn.disabled;
+    const autoProceed = HUD.batchAutoProceed.checked;
+
     showCollisionDialog(collisionDialog, {
       time: elapsed,
       object: objectName,
       distanceToGoal: distGoal
-    });
+    }, isBatch ? () => {
+      isPausedForCollision = false;
+      (window as any).proceedToNextTrial = true;
+    } : undefined);
+
+    if (isBatch && autoProceed) {
+      setTimeout(() => {
+        if (isPausedForCollision) {
+          isPausedForCollision = false;
+          collisionDialog!.style.display = "none";
+          (window as any).proceedToNextTrial = true;
+        }
+      }, 2000);
+    }
+
+    // B1 and B2: Mission should end as soon as the drone sort of collides 
+    // with the target/firefighter. We'll simulate success if within target radius.
+    if (activeMissionPlayground && (activeMissionPlayground.id === "mission-forest-supply-drop" || activeMissionPlayground.id === "mission-firefighter-id")) {
+      const target = activeMissionPlayground.missionTargets[0];
+      const targetCart = Cesium.Cartesian3.fromDegrees(target.position.lon, target.position.lat, target.position.height);
+      const d = Cesium.Cartesian3.distance(drone.position, targetCart);
+
+      // If we collide within twice the target radius, assume hit
+      if (d < target.arrivalRadius * 2) {
+        if (missionBenchmarkRunner && missionBenchmarkRunner.isRunning()) {
+          // Force complete via the tick in next frame
+          (missionBenchmarkRunner as any).metrics.correctTargetReached = "correct";
+        }
+      }
+    }
   }
 
   init();

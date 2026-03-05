@@ -88,12 +88,12 @@ export interface Playground {
   obstacles: Obstacle[];
   waypoints?: Waypoint[];
   timeLimit?: number;
+  zoneThresholds?: ZoneThreshold[];
 }
 
 export interface MissionPlayground extends Playground {
   missionType: "supply-drop" | "altitude-climb" | "target-id" | "multi-stop";
   missionGoal: string;
   missionTargets: MissionTarget[];
-  zoneThresholds?: ZoneThreshold[];
   ascentTarget?: number;
 }

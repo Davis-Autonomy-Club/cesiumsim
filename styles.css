@@ -193,5 +193,215 @@ body {
     left: 0.5rem;
     width: auto;
   }
+}
 
+/* ─── Benchmark Runner Panel ─── */
+#benchmark-runner-panel {
+  position: fixed;
+  left: 1rem;
+  top: 15rem;
+  /* Below HUD */
+  z-index: 10;
+  width: 19rem;
+  padding: 0.9rem 1rem 1rem;
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--bg-panel-border);
+  background: linear-gradient(165deg, var(--bg-panel), rgba(8, 16, 26, 0.42));
+  box-shadow: var(--shadow);
+}
+
+.control-group {
+  margin: 0.8rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.control-group label {
+  font-family: "Space Mono", monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.control-group input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--bg-panel-border);
+  color: var(--text-main);
+  padding: 0.4rem;
+  font-family: "Space Mono", monospace;
+  font-size: 0.9rem;
+}
+
+.run-btn {
+  width: 100%;
+  padding: 0.6rem;
+  background: #2a5a8a;
+  color: white;
+  border: 1px solid var(--accent);
+  font-family: "Rajdhani", sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.run-btn:hover {
+  background: #3572b0;
+  box-shadow: 0 0 12px rgba(130, 227, 255, 0.3);
+}
+
+/* ─── Modal Dialogs ─── */
+.modal-dialog {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-content {
+  background: #0a111a;
+  border: 1px solid var(--accent);
+  padding: 2rem;
+  width: min(500px, 90vw);
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+  font-family: "Space Mono", monospace;
+}
+
+.modal-content h2 {
+  margin-top: 0;
+  color: var(--accent);
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(130, 227, 255, 0.2);
+  padding-bottom: 0.5rem;
+}
+
+#benchmark-metrics-content {
+  margin: 1.5rem 0;
+  line-height: 1.6;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 0.4rem 0;
+}
+
+.metric-label {
+  color: var(--text-muted);
+}
+
+.metric-value {
+  color: var(--text-main);
+  font-weight: 700;
+}
+
+.close-btn {
+  width: 100%;
+  padding: 0.7rem;
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: "Space Mono", monospace;
+  text-transform: uppercase;
+}
+
+.close-btn:hover {
+  border-color: var(--text-main);
+  color: var(--text-main);
+}
+
+/* ─── Mission Toast ─── */
+.mission-toast {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  background: rgba(30, 80, 40, 0.9);
+  border-left: 5px solid #4ade80;
+  color: #fff;
+  padding: 0.8rem 1.5rem;
+  font-family: "Space Mono", monospace;
+  font-weight: 700;
+  z-index: 2000;
+  transform: translateY(150%);
+  transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.mission-toast.show {
+  transform: translateY(0);
+}
+
+/* ─── Batch Runner Specific Styles ─── */
+.batch-trial-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(133, 175, 255, 0.2);
+  color: var(--text-main);
+  padding: 0.2rem 0.4rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  width: 100%;
+}
+
+.batch-trial-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.remove-trial-btn {
+  background: transparent;
+  border: none;
+  color: #ff6b6b;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 0 0.4rem;
+  line-height: 1;
+}
+
+.remove-trial-btn:hover {
+  color: #ff4747;
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "Space Mono", monospace;
+  font-size: 0.8rem;
+  color: var(--text-main);
+}
+
+.results-table th {
+  text-align: left;
+  background: rgba(133, 175, 255, 0.1);
+  padding: 0.6rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--bg-panel-border);
+}
+
+.results-table td {
+  padding: 0.6rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.results-table tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.status-yes {
+  color: #4ade80;
+  font-weight: 700;
+}
+
+.status-no {
+  color: #ff6b6b;
+  font-weight: 700;
 }
