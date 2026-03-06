@@ -1,24 +1,59 @@
-import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM } from './geospatial-overlay.js';
-import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreativeMode, updateCreativeMode, getFreeCamReadout, setHighlightVisible } from './creative-mode/creative-mode.js';
+// ### What this file does
+// This is the main application. It sets up the 3D globe, creates the drone,
+// reads keyboard input, runs the flight physics every frame, updates the camera,
+// and displays speed/altitude/status on screen. Everything starts in the init()
+// function at the bottom and runs in a loop via stepFrame().
 
+// ### Imports — pull in features from other files
+import { initGeospatialOverlay, updateGeospatialOverlay, getCloudImmersionState, CLOUD_BAND_CORE_BOTTOM, setCloudsEnabled } from './geospatial-overlay.js';
+import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreativeMode, updateCreativeMode, getFreeCamReadout, setHighlightVisible } from './creative-mode/creative-mode.js';
+import {
+  DEV_CONFIG,
+  WindModel,
+  MODERATE,
+  computeForces,
+  hoverThrottle,
+  getAirDensity
+} from './flight-physics/index.js';
+import {
+  initIncidentOverlay,
+  buildIncidentLegend,
+  toggleIncidentOverlay,
+  AIRLINE_FIRE_LOCATION,
+} from './incident-overlay.js';
+import {
+  initAglCeiling,
+  updateAglCeiling,
+  toggleAglCeiling,
+  getAglCeilingStatus,
+} from './agl-ceiling.js';
+
+// ### Application entry point — everything lives inside this function
 (function main() {
+  // ### Cesium access token and map locations
   const DEFAULT_CESIUM_TOKEN =
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmFjOWQwNy1lYTA5LTRmZWUtODNkOS1jYTAyNWM0OGVkMmMiLCJpZCI6Mzc3Mzg3LCJpYXQiOjE3NjgxNzAyNDN9.rAi0BHXk9BUPEfYxockPHQxu9qvCJ8ifJS0duz7HUl0";
-  const DEFAULT_GOOGLE_MAPS_API_KEY =
-    "AIzaSyDZoPrWVs0BJHxIYSA0-ijn15jN9P1y2M4";
+
 
   const START_LOCATION = {
-    longitude: -122.3933,
-    latitude: 37.7937,
-    height: 190.0,
+    longitude: -121.20523,
+    latitude: 36.67424,
+    height: 393.2,  // 1290ft MSL / 250ft AGL
   };
 
   const UCD_LOCATION = {
     longitude: -121.7617,
     latitude: 38.5382,
-    height: 200.0,
+    height: 0,  // placeholder — actual height set by terrain sampling in teleportTo()
   };
 
+  const BEU_LOCATION = {
+    longitude: -121.4190,
+    latitude: 36.1456,
+    height: 0,  // placeholder — actual height set by terrain sampling in teleportTo()
+  };
+
+  // ### Flight handling — how fast the drone accelerates, turns, and how the camera follows
   const FLIGHT = {
     horizontalAcceleration: 22.0,
     maxHorizontalSpeed: 20.0,
@@ -31,33 +66,32 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     maxVisualRoll: Cesium.Math.toRadians(15.0),
     visualTiltRate: 5.0,
     visualTiltReturn: 6.0,
-    minimumClearance: 2.0,
+    minimumClearance: 0.5,
     cameraForwardOffset: -18.0,
     cameraUpOffset: 6.0,
     cameraLookAboveOffset: 6.0,
   };
 
-  /* ─── Building collision configuration ─── */
+  // ### Building collision settings — prevents the drone from flying through buildings
   const BUILDING_COLLISION = {
     enabled: true,
     activationAltitudeAGL: 500,   // only check below this AGL altitude (meters)
-    minimumClearance: 6.0,         // min distance above building rooftops (meters)
-    forwardCheckDistance: 80,      // forward ray check distance (meters)
-    wallStopDistance: 5,          // full stop when wall is this close (meters)
-    deflectionStrength: 1,      // velocity kill factor at closest range (0-1)
-    pushbackDistance: 3.0,         // meters to push back from wall on hard collision
+    minimumClearance: 0.5,         // min distance above building rooftops (meters)
+    forwardCheckDistance: 20,      // forward ray check distance (meters)
+    wallStopDistance: 1.0,         // full stop when wall is this close (meters)
+    deflectionStrength: 1,         // velocity kill factor at closest range (0-1)
+    pushbackDistance: 0.5,         // meters to push back from wall on hard collision
   };
 
   const HUD = {
     speed: document.getElementById("hud-speed"),
     altitudeAgl: document.getElementById("hud-altitude-agl"),
     altitudeMsl: document.getElementById("hud-altitude-msl"),
-    heading: document.getElementById("hud-heading"),
-    attitude: document.getElementById("hud-attitude"),
-    position: document.getElementById("hud-position"),
     buildingCol: document.getElementById("hud-building-col"),
+    aglCeiling: document.getElementById("hud-agl-ceiling"),
     datasetStatus: document.getElementById("dataset-status"),
     flightStatus: document.getElementById("flight-status"),
+    minimapCoords: document.getElementById("minimap-coords"),
   };
 
   if (!window.Cesium) {
@@ -66,6 +100,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     return;
   }
 
+  // ### Keyboard keys used by the simulator — prevents browser from scrolling when you press arrow keys
   const KEY_BLOCKLIST = new Set([
     "ArrowUp",
     "ArrowDown",
@@ -81,28 +116,20 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     "KeyE",
   ]);
 
+  // ### Cesium token handling — can be set via URL parameter or saved in browser storage
   const query = new URLSearchParams(window.location.search);
   const configuredCesiumToken =
     query.get("cesiumToken") ||
     window.localStorage.getItem("cesiumToken") ||
     DEFAULT_CESIUM_TOKEN;
-  const configuredGoogleApiKey =
-    query.get("googleApiKey") ||
-    window.localStorage.getItem("googleApiKey") ||
-    DEFAULT_GOOGLE_MAPS_API_KEY;
 
   if (query.has("cesiumToken")) {
     window.localStorage.setItem("cesiumToken", query.get("cesiumToken"));
   }
-  if (query.has("googleApiKey")) {
-    window.localStorage.setItem("googleApiKey", query.get("googleApiKey"));
-  }
 
   Cesium.Ion.defaultAccessToken = configuredCesiumToken;
-  if (configuredGoogleApiKey && Cesium.GoogleMaps) {
-    Cesium.GoogleMaps.defaultApiKey = configuredGoogleApiKey;
-  }
 
+  // ### Drone state — position, velocity, heading, throttle, and physics config
   const drone = {
     position: Cesium.Cartesian3.fromDegrees(
       START_LOCATION.longitude,
@@ -115,9 +142,18 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     visualPitch: 0.0,
     visualRoll: 0.0,
     orientation: new Cesium.Quaternion(0, 0, 0, 1),
-    lastGroundHeight: 0.0,
+    lastGroundHeight: START_LOCATION.height,  // init to spawn MSL; corrected by globe.getHeight() on first frame
+    config: DEV_CONFIG,      // Switch to ATLAS_CONFIG for full-size drone
+    throttle: 0.5,           // Current throttle 0-1
+    airDensity: 1.225,       // Current air density (for HUD)
   };
 
+  // Wind model instance
+  const wind = new WindModel(MODERATE);
+  // Uncomment to test with wind:
+  // wind.setMeanWind(270, 8);  // 8 m/s from West
+
+  // ### Scratch variables — pre-created math objects reused every frame to avoid memory allocation
   const scratch = {
     hpr: new Cesium.HeadingPitchRoll(),
     transform: new Cesium.Matrix4(),
@@ -138,18 +174,24 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     // Building collision scratch
     buildingRayDirection: new Cesium.Cartesian3(),
     buildingCartographic: new Cesium.Cartographic(),
+    // Physics scratch — reused every frame instead of allocating new objects
+    ecefToEnu: new Cesium.Matrix4(),
+    hVelENU: new Cesium.Cartesian3(),
+    dragENU: new Cesium.Cartesian3(),
+    dragECEF: new Cesium.Cartesian3(),
+    forwardRay: new Cesium.Ray(),
   };
 
   const keyState = new Set();
   let viewer = null;
   let lastTime = performance.now();
 
-  /* ─── Drone Cesium entity state ─── */
+  // ### Drone 3D model and camera mode
   const droneHpr = new Cesium.HeadingPitchRoll();
   const droneModelOrientation = new Cesium.Quaternion();
   let droneEntity = null;
 
-  /* ─── Camera mode ─── */
+  // ### Camera modes — chase view (behind drone) or FPV (first-person through the drone's eyes)
   const CAMERA_CHASE = 0;
   const CAMERA_FPV = 1;
   let cameraMode = CAMERA_CHASE;
@@ -160,7 +202,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
   let fpvHudAlt = null;
   let fpvHudSpd = null;
 
-  /* ─── Dynamic resolution scaling ─── */
+  // ### Dynamic resolution — automatically lowers graphics quality when framerate drops
   const DRS = {
     frameTimeSum: 0,
     frameCount: 0,
@@ -191,42 +233,89 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     }
   }
 
-  /* ─── Building collision state ─── */
+  // ### Runtime state for various systems
   let buildingCollisionActive = false;   // true when below activation altitude
   let lastBuildingHitDistance = Infinity; // distance to nearest forward obstacle
 
-  /* ─── Cloud immersion state ─── */
+  // Cloud fog state (white-out effect when flying through clouds)
   let cloudFogOverlay = null;
   let currentCloudImmersion = 0; // smoothed 0..1
   let currentCesiumFade = 1.0;   // smoothed terrain visibility (0=hidden, 1=visible)
-  let googleTilesRef = null;      // reference to 3D tileset primitive
+  let cesiumTilesRef = null;      // reference to 3D tileset primitive
   let osmBuildingsRef = null;     // reference to OSM buildings primitive
 
-  /* ─── Speed multiplier ─── */
-  const SPEED_TIERS = [1, 3, 5, 10, 20];
-  let speedTierIndex = 0;
-  let speedMultiplier = SPEED_TIERS[0];
+  // ### MAVLink bridge — sends drone state to QGroundControl via WebSocket → mavlink-bridge.py
+  let mavBridgeWs = null;
+  let mavBridgeLastSend = 0;
+  const MAV_BRIDGE_INTERVAL = 100; // ms between sends (10 Hz)
+  const MAV_BRIDGE_URL = 'ws://localhost:8089';
 
-  function setSpeedTier(index) {
-    speedTierIndex = Math.max(0, Math.min(index, SPEED_TIERS.length - 1));
-    speedMultiplier = SPEED_TIERS[speedTierIndex];
-    updateSpeedTierHUD();
+  function initMavBridge() {
+    try {
+      mavBridgeWs = new WebSocket(MAV_BRIDGE_URL);
+      mavBridgeWs.onopen = () => console.log('[mavlink-bridge] Connected');
+      mavBridgeWs.onclose = () => {
+        console.log('[mavlink-bridge] Disconnected, reconnecting in 3s...');
+        mavBridgeWs = null;
+        setTimeout(initMavBridge, 3000);
+      };
+      mavBridgeWs.onerror = () => { mavBridgeWs = null; };
+    } catch (_) { mavBridgeWs = null; }
   }
 
-  function updateSpeedTierHUD() {
-    const el = document.getElementById("hud-speed-tier");
-    if (el) {
-      el.textContent = `${speedMultiplier}x`;
-    }
-    // Update button states
-    SPEED_TIERS.forEach((tier, i) => {
-      const btn = document.getElementById(`speed-btn-${tier}`);
-      if (btn) {
-        btn.classList.toggle("active", i === speedTierIndex);
-      }
-    });
+  function sendMavBridgePosition() {
+    if (!mavBridgeWs || mavBridgeWs.readyState !== WebSocket.OPEN) return;
+    const now = performance.now();
+    if (now - mavBridgeLastSend < MAV_BRIDGE_INTERVAL) return;
+    mavBridgeLastSend = now;
+
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+
+    // Compute NED velocity from ECEF horizontal velocity
+    const enuTransform = Cesium.Transforms.eastNorthUpToFixedFrame(
+      drone.position, Cesium.Ellipsoid.WGS84, scratch.transform
+    );
+    const ecefToEnu = Cesium.Matrix4.inverseTransformation(enuTransform, scratch.ecefToEnu);
+    const velENU = Cesium.Matrix4.multiplyByPointAsVector(
+      ecefToEnu, drone.horizontalVelocity, scratch.hVelENU
+    );
+
+    // Normalize heading to 0-360 degrees
+    let hdgDeg = Cesium.Math.toDegrees(drone.heading) % 360;
+    if (hdgDeg < 0) hdgDeg += 360;
+
+    mavBridgeWs.send(JSON.stringify({
+      lat: Cesium.Math.toDegrees(scratch.cartographic.latitude),
+      lon: Cesium.Math.toDegrees(scratch.cartographic.longitude),
+      alt_msl: scratch.cartographic.height,
+      alt_agl: Math.max(0, scratch.cartographic.height - drone.lastGroundHeight),
+      vn: velENU.y,                  // North = ENU Y
+      ve: velENU.x,                  // East = ENU X
+      vd: -drone.verticalSpeed,      // Down = -Up
+      heading: hdgDeg,
+      pitch: drone.visualPitch,      // radians
+      roll: drone.visualRoll,        // radians
+      groundspeed: Math.sqrt(velENU.x * velENU.x + velENU.y * velENU.y),
+      throttle: drone.throttle,      // 0-1
+    }));
   }
 
+  /* ─── Speed multiplier (fixed 50x) ─── */
+  const speedMultiplier = 50;
+
+  /* ─── Cloud toggle ─── */
+  let cloudsOn = false;
+
+  /* ─── Mini-map state ─── */
+  let minimapCanvas = null;
+  let minimapCtx = null;
+  let minimapPerimCoords = null;  // [{lon, lat}, ...] from GeoJSON
+  const MINIMAP_PERIM_BOUNDS = {
+    minLon: -121.979, maxLon: -120.214,
+    minLat: 35.789, maxLat: 36.989,
+  };
+
+  // ### Status message — updates the text in the status panel
   function setFlightStatus(text, isWarning) {
     HUD.flightStatus.textContent = text;
     HUD.flightStatus.style.color = isWarning ? "#ffd36f" : "#d9ecff";
@@ -236,6 +325,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     return keyState.has(code);
   }
 
+  // ### Drone orientation math — converts heading/pitch/roll into a 3D rotation
   function updateDroneOrientation() {
     scratch.hpr.heading = drone.heading;
     scratch.hpr.pitch = drone.visualPitch;
@@ -250,6 +340,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     );
   }
 
+  // ### World axes — figures out which direction is "up" at the drone's position on the curved Earth
   function updateWorldAxes() {
     // Compute ENU-to-ECEF matrix (position only, no HPR rotation baked in)
     Cesium.Transforms.eastNorthUpToFixedFrame(
@@ -287,6 +378,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     Cesium.Cartesian3.normalize(scratch.up, scratch.up);
   }
 
+  // ### Horizontal axes — converts the drone's heading into "forward" and "right" directions
   function updateHorizontalAxes() {
     // Heading-only forward/right in ECEF (no pitch — used for movement and camera)
     Cesium.Transforms.eastNorthUpToFixedFrame(
@@ -309,6 +401,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     Cesium.Cartesian3.normalize(scratch.horizontalRight, scratch.horizontalRight);
   }
 
+  // ### Steering — reads arrow keys and turns the drone left/right, tilts it visually
   function applyOrientationInput(dt) {
     // Left/Right arrows: pure yaw (heading rotation only, no visual effect)
     const turnInput = (isDown("ArrowRight") ? 1 : 0) - (isDown("ArrowLeft") ? 1 : 0);
@@ -340,77 +433,163 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     drone.visualRoll = Cesium.Math.clamp(drone.visualRoll, -FLIGHT.maxVisualRoll, FLIGHT.maxVisualRoll);
   }
 
+  // ### Movement physics — applies thrust, wind, drag, and gravity to move the drone each frame
   function applyDroneMovement(dt) {
-    const sm = speedMultiplier;
 
-    // ── Horizontal channel: Up/Down arrows → forward/back, A/D → strafe ──
-    const moveInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
+    // ── INPUT → THROTTLE ──────────────────────────────────────────────────────
+    const vertInput = (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
+
+    // Get current altitude
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+    const altMSL = scratch.cartographic.height;
+
+    // Compute hover throttle at current altitude (auto-adjusts for air density)
+    const hoverThrot = hoverThrottle(drone.config, altMSL);
+
+    // Throttle = hover + input adjustment
+    const throttleAdjust = 0.15;
+    drone.throttle = Cesium.Math.clamp(hoverThrot + vertInput * throttleAdjust, 0.0, 1.0);
+
+    // ── WIND SAMPLING ─────────────────────────────────────────────────────────
+    // Use lon/lat scaled to meters for spatial coherence
+    const lonDeg = Cesium.Math.toDegrees(scratch.cartographic.longitude);
+    const latDeg = Cesium.Math.toDegrees(scratch.cartographic.latitude);
+    const windPosX = lonDeg * 111000;
+    const windPosY = latDeg * 111000;
+    const windENU = wind.sample(windPosX, windPosY, altMSL, dt);
+
+    // ── CURRENT VELOCITY → ENU ────────────────────────────────────────────────
+    const enuTransform = Cesium.Transforms.eastNorthUpToFixedFrame(
+      drone.position, Cesium.Ellipsoid.WGS84, scratch.transform
+    );
+    const ecefToEnu = Cesium.Matrix4.inverseTransformation(enuTransform, scratch.ecefToEnu);
+    const hVelENU = Cesium.Matrix4.multiplyByPointAsVector(
+      ecefToEnu, drone.horizontalVelocity, scratch.hVelENU
+    );
+
+    const velocityENU = {
+      x: hVelENU.x,
+      y: hVelENU.y,
+      z: drone.verticalSpeed,
+    };
+
+    // ── COMPUTE FORCES ────────────────────────────────────────────────────────
+    const forces = computeForces({
+      throttle: drone.throttle,
+      windENU,
+      velocityENU,
+      altMSL,
+      config: drone.config,
+    });
+
+    drone.airDensity = forces.rho;
+
+    // ── HORIZONTAL MOVEMENT (existing input logic) ────────────────────────────
+    const horizInput = (isDown("ArrowUp") ? 1 : 0) - (isDown("ArrowDown") ? 1 : 0);
     const strafeInput = (isDown("KeyD") ? 1 : 0) - (isDown("KeyA") ? 1 : 0);
 
-    if (moveInput !== 0) {
+    if (horizInput !== 0) {
       Cesium.Cartesian3.multiplyByScalar(
         scratch.horizontalForward,
-        moveInput * FLIGHT.horizontalAcceleration * sm * dt,
-        scratch.velocityStep,
+        horizInput * FLIGHT.horizontalAcceleration * dt,
+        scratch.acceleration
       );
-      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.acceleration, drone.horizontalVelocity);
     }
 
     if (strafeInput !== 0) {
       Cesium.Cartesian3.multiplyByScalar(
         scratch.horizontalRight,
-        strafeInput * FLIGHT.horizontalAcceleration * sm * dt,
-        scratch.velocityStep,
+        strafeInput * FLIGHT.horizontalAcceleration * dt,
+        scratch.acceleration
       );
-      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+      Cesium.Cartesian3.add(drone.horizontalVelocity, scratch.acceleration, drone.horizontalVelocity);
     }
 
-    // Horizontal drag (exponential)
-    const hDrag = Math.exp(-FLIGHT.horizontalDrag * dt);
-    Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, hDrag, drone.horizontalVelocity);
+    // Apply drag from physics model (ENU → ECEF)
+    scratch.dragENU.x = forces.dragAccelX * dt;
+    scratch.dragENU.y = forces.dragAccelY * dt;
+    scratch.dragENU.z = 0;
+    const dragECEF = Cesium.Matrix4.multiplyByPointAsVector(enuTransform, scratch.dragENU, scratch.dragECEF);
+    Cesium.Cartesian3.add(drone.horizontalVelocity, dragECEF, drone.horizontalVelocity);
+
+    // ── ACTIVE STABILIZATION (flight-controller position-hold) ────────────────
+    // When the pilot releases the sticks, a real FC actively brakes to hold position.
+    // Aerodynamic drag alone (½ρV²CdA) approaches zero at low speed, causing infinite drift.
+    // This exponential damping simulates electronic braking / active stabilization.
+    if (horizInput === 0 && strafeInput === 0) {
+      const stabDamping = Math.exp(-12.0 * dt);  // strong braking when no input
+      Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, stabDamping, drone.horizontalVelocity);
+    }
+
+    // Velocity deadzone — snap to zero below threshold to prevent micro-drift
+    const horizSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
+    if (horizSpeed < 0.1) {
+      drone.horizontalVelocity.x = 0.0;
+      drone.horizontalVelocity.y = 0.0;
+      drone.horizontalVelocity.z = 0.0;
+    }
 
     // Clamp horizontal speed
-    const effectiveMaxH = FLIGHT.maxHorizontalSpeed * sm;
-    const hSpeed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
-    if (hSpeed > effectiveMaxH) {
+    const maxHorizSpeed = FLIGHT.maxHorizontalSpeed;
+    if (horizSpeed > maxHorizSpeed) {
       Cesium.Cartesian3.multiplyByScalar(
         drone.horizontalVelocity,
-        effectiveMaxH / hSpeed,
-        drone.horizontalVelocity,
+        maxHorizSpeed / horizSpeed,
+        drone.horizontalVelocity
       );
     }
 
-    // ── Vertical channel: W/S → thrust along surface normal ──
-    const vertInput = (isDown("KeyW") ? 1 : 0) - (isDown("KeyS") ? 1 : 0);
+    // ── VERTICAL MOVEMENT (thrust-based) ──────────────────────────────────────
+    // Net vertical: thrust + gravity + drag
+    drone.verticalSpeed += forces.netAccelZ * dt;
 
-    if (vertInput !== 0) {
-      drone.verticalSpeed += vertInput * FLIGHT.verticalAcceleration * sm * dt;
+    // Active vertical stabilization when no W/S input
+    if (vertInput === 0) {
+      drone.verticalSpeed *= Math.exp(-10.0 * dt);
     }
 
-    // Vertical drag (exponential)
-    drone.verticalSpeed *= Math.exp(-FLIGHT.verticalDrag * dt);
+    // Vertical deadzone
+    if (Math.abs(drone.verticalSpeed) < 0.05) {
+      drone.verticalSpeed = 0.0;
+    }
 
     // Clamp vertical speed
-    const effectiveMaxV = FLIGHT.maxVerticalSpeed * sm;
-    drone.verticalSpeed = Cesium.Math.clamp(drone.verticalSpeed, -effectiveMaxV, effectiveMaxV);
+    const maxVertSpeed = FLIGHT.maxVerticalSpeed;
+    drone.verticalSpeed = Cesium.Math.clamp(drone.verticalSpeed, -maxVertSpeed, maxVertSpeed);
 
-    // ── Combine into position update ──
-    // Horizontal movement
+    // ── POSITION INTEGRATION ──────────────────────────────────────────────────
+    // Horizontal
     Cesium.Cartesian3.multiplyByScalar(drone.horizontalVelocity, dt, scratch.movementStep);
     Cesium.Cartesian3.add(drone.position, scratch.movementStep, drone.position);
 
-    // Vertical movement along surface normal
+    // Vertical
     Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
     Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, drone.verticalSpeed * dt, scratch.verticalStep);
     Cesium.Cartesian3.add(drone.position, scratch.verticalStep, drone.position);
   }
 
+  // ### Terrain sampling — uses the terrain provider for accurate ground height
+  let terrainSamplePending = false;
+
+  function requestTerrainSample() {
+    if (terrainSamplePending) return;
+    terrainSamplePending = true;
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+    const pos = new Cesium.Cartographic(scratch.cartographic.longitude, scratch.cartographic.latitude);
+    Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, [pos]).then(results => {
+      const h = results[0].height;
+      if (Number.isFinite(h) && h > 0) {
+        drone.lastGroundHeight = h;
+      }
+      terrainSamplePending = false;
+    }).catch(() => { terrainSamplePending = false; });
+  }
+
+  // ### Ground collision — prevents the drone from going below the terrain surface
   function enforceTerrainClearance() {
     Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
-    const sampledGround = viewer.scene.globe.getHeight(scratch.cartographic);
-    if (Number.isFinite(sampledGround)) {
-      drone.lastGroundHeight = sampledGround;
-    }
+    requestTerrainSample();
     const minHeight = drone.lastGroundHeight + FLIGHT.minimumClearance;
     if (scratch.cartographic.height < minHeight) {
       scratch.cartographic.height = minHeight;
@@ -437,11 +616,39 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     }
   }
 
-  /* ─── Building collision (rooftop + wall) ───
-   * Uses scene.sampleHeight() for height-based collision (terrain + 3D tiles)
-   * and scene.pickFromRay() for forward wall detection.
-   * Only active below BUILDING_COLLISION.activationAltitudeAGL to keep cost low.
-   */
+  // ### 400ft altitude ceiling — prevents the drone from flying above the FAA limit
+  const AGL_CEILING_HEIGHT = 121.92; // 400 ft in meters
+
+  function enforceAglCeiling() {
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+    const maxHeight = drone.lastGroundHeight + AGL_CEILING_HEIGHT;
+
+    if (scratch.cartographic.height > maxHeight) {
+      scratch.cartographic.height = maxHeight;
+      Cesium.Cartesian3.fromRadians(
+        scratch.cartographic.longitude,
+        scratch.cartographic.latitude,
+        scratch.cartographic.height,
+        Cesium.Ellipsoid.WGS84,
+        drone.position,
+      );
+
+      // Kill upward vertical speed
+      if (drone.verticalSpeed > 0.0) {
+        drone.verticalSpeed = 0.0;
+      }
+
+      // Strip any upward component from horizontal velocity
+      Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
+      const hVertComponent = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
+      if (hVertComponent > 0.0) {
+        Cesium.Cartesian3.multiplyByScalar(scratch.surfaceNormal, hVertComponent, scratch.velocityStep);
+        Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
+      }
+    }
+  }
+
+  // ### Building collision — stops the drone from flying through rooftops and walls
   function enforceBuildingCollision() {
     if (!BUILDING_COLLISION.enabled || !viewer || !viewer.scene) return;
 
@@ -464,56 +671,23 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
 
     buildingCollisionActive = true;
 
-    // Build exclusion list (exclude the F-22 so we don't self-collide)
+    // Build exclusion list (exclude the drone so we don't self-collide)
     const excludeList = droneEntity ? [droneEntity] : [];
 
-    /* ── 1. Height-based collision (rooftop) ──
-     * scene.sampleHeight returns the height of the tallest scene geometry
-     * (terrain + 3D tiles) at the given lat/lon. If the drone is below that
-     * height, it gets pushed up — prevents flying through rooftops. */
-    if (hasSampleHeight) {
-      const sceneHeight = scene.sampleHeight(scratch.buildingCartographic, excludeList);
-      if (Number.isFinite(sceneHeight)) {
-        const minHeight = sceneHeight + BUILDING_COLLISION.minimumClearance;
-        if (scratch.buildingCartographic.height < minHeight) {
-          // Snap drone above the building
-          scratch.buildingCartographic.height = minHeight;
-          Cesium.Cartesian3.fromRadians(
-            scratch.buildingCartographic.longitude,
-            scratch.buildingCartographic.latitude,
-            scratch.buildingCartographic.height,
-            Cesium.Ellipsoid.WGS84,
-            drone.position,
-          );
+    // Rooftop collision is handled by enforceTerrainClearance (uses sampleHeight).
+    // This function only handles forward wall ray checks.
 
-          // Kill downward vertical speed
-          if (drone.verticalSpeed < 0.0) {
-            drone.verticalSpeed = 0.0;
-          }
-
-          // Strip any downward component from horizontal velocity
-          Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
-          const hVertComponent = Cesium.Cartesian3.dot(drone.horizontalVelocity, scratch.surfaceNormal);
-          if (hVertComponent < 0.0) {
-            Cesium.Cartesian3.multiplyByScalar(
-              scratch.surfaceNormal, hVertComponent, scratch.velocityStep,
-            );
-            Cesium.Cartesian3.subtract(drone.horizontalVelocity, scratch.velocityStep, drone.horizontalVelocity);
-          }
-        }
-      }
-    }
-
-    /* ── 2. Forward wall collision ──
+    /* ── Forward wall collision ──
      * Cast a ray in the drone's forward direction. If it hits scene geometry
      * within forwardCheckDistance, progressively brake; if within wallStopDistance,
      * fully stop and push the drone back. */
     if (hasPickFromRay) {
       const speed = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
-      if (speed > 1.0) {
+      if (speed > 0.3) {
         // Forward ray
-        const forwardRay = new Cesium.Ray(drone.position, scratch.forward);
-        const forwardHit = scene.pickFromRay(forwardRay, excludeList);
+        Cesium.Cartesian3.clone(drone.position, scratch.forwardRay.origin);
+        Cesium.Cartesian3.clone(scratch.forward, scratch.forwardRay.direction);
+        const forwardHit = scene.pickFromRay(scratch.forwardRay, excludeList);
 
         if (forwardHit && forwardHit.position) {
           const distance = Cesium.Cartesian3.distance(drone.position, forwardHit.position);
@@ -549,6 +723,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     }
   }
 
+  // ### Camera positioning — places the camera behind the drone (chase) or on the drone (FPV)
   function updateCamera() {
     Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(drone.position, scratch.surfaceNormal);
 
@@ -581,7 +756,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
         Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
         const agl = Math.max(0.0, scratch.cartographic.height - drone.lastGroundHeight);
         const spd = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
-        fpvHudAlt.textContent = `ALT ${agl.toFixed(1)} m`;
+        fpvHudAlt.textContent = `ALT ${(agl * 3.28084).toFixed(0)} ft`;
         fpvHudSpd.textContent = `SPD ${spd.toFixed(1)} m/s`;
       }
     } else {
@@ -611,15 +786,16 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     }
   }
 
+  // ### HUD display — updates all the numbers on screen (speed, altitude, collision, ceiling)
   function updateHudReadout() {
     if (isCreativeModeActive()) {
       const r = getFreeCamReadout();
       HUD.speed.textContent = `${(r.speedMs * 3.6).toFixed(1)} km/h`;
-      HUD.altitudeAgl.textContent = `${r.agl.toFixed(1)} m`;
-      HUD.altitudeMsl.textContent = `${r.altMsl.toFixed(1)} m`;
-      HUD.heading.textContent = `${r.headingDeg.toFixed(1)} deg`;
-      HUD.attitude.textContent = `0.0 deg / 0.0 deg`;
-      HUD.position.textContent = `${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}`;
+      HUD.altitudeAgl.textContent = `${(r.agl * 3.28084).toFixed(0)} ft`;
+      HUD.altitudeMsl.textContent = `${(r.altMsl * 3.28084).toFixed(0)} ft`;
+      if (HUD.minimapCoords) {
+        HUD.minimapCoords.textContent = `${r.lat.toFixed(5)}, ${r.lon.toFixed(5)}`;
+      }
       if (HUD.buildingCol) {
         HUD.buildingCol.textContent = 'OFF';
         HUD.buildingCol.style.color = '';
@@ -630,18 +806,15 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
     const speedMetersPerSecond = Cesium.Cartesian3.magnitude(drone.horizontalVelocity);
     const agl = Math.max(0.0, scratch.cartographic.height - drone.lastGroundHeight);
-    const headingDeg = Cesium.Math.toDegrees(Cesium.Math.zeroToTwoPi(drone.heading));
-    const pitchDeg = Cesium.Math.toDegrees(drone.visualPitch);
-    const rollDeg = Cesium.Math.toDegrees(drone.visualRoll);
 
     HUD.speed.textContent = `${(speedMetersPerSecond * 3.6).toFixed(1)} km/h`;
-    HUD.altitudeAgl.textContent = `${agl.toFixed(1)} m`;
-    HUD.altitudeMsl.textContent = `${scratch.cartographic.height.toFixed(1)} m`;
-    HUD.heading.textContent = `${headingDeg.toFixed(1)} deg`;
-    HUD.attitude.textContent = `${pitchDeg.toFixed(1)} deg / ${rollDeg.toFixed(1)} deg`;
-    HUD.position.textContent =
-      `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
-      `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
+    HUD.altitudeAgl.textContent = `${(agl * 3.28084).toFixed(0)} ft`;
+    HUD.altitudeMsl.textContent = `${(scratch.cartographic.height * 3.28084).toFixed(0)} ft`;
+    if (HUD.minimapCoords) {
+      HUD.minimapCoords.textContent =
+        `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
+        `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
+    }
 
     // Building collision HUD
     if (HUD.buildingCol) {
@@ -662,8 +835,48 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
         HUD.buildingCol.style.color = '#44ff44';
       }
     }
+
+    // AGL Ceiling HUD
+    if (HUD.aglCeiling) {
+      const ceilStatus = getAglCeilingStatus(agl);
+      HUD.aglCeiling.textContent = ceilStatus.text;
+      HUD.aglCeiling.style.color = ceilStatus.color;
+    }
+
+    // Air density and throttle display
+    const densityEl = document.getElementById('hud-density');
+    const throttleEl = document.getElementById('hud-throttle');
+    if (densityEl) densityEl.textContent = `${drone.airDensity.toFixed(3)} kg/m³`;
+    if (throttleEl) throttleEl.textContent = `${(drone.throttle * 100).toFixed(0)}%`;
+
+    // Throttle gauge bar
+    const tgFill = document.getElementById('tg-fill');
+    const tgHoverLine = document.getElementById('tg-hover-line');
+    const tgPercent = document.getElementById('tg-percent');
+    if (tgFill) {
+      const pct = Math.min(100, Math.max(0, drone.throttle * 100));
+      tgFill.style.height = pct + '%';
+      // Color: green → yellow → red
+      if (pct > 85) {
+        tgFill.style.background = 'linear-gradient(to top, #ff4444, #ffaa00)';
+      } else if (pct > 60) {
+        tgFill.style.background = 'linear-gradient(to top, #ffdd44, #82e3ff)';
+      } else {
+        tgFill.style.background = 'linear-gradient(to top, #44ff44, #82e3ff)';
+      }
+    }
+    if (tgHoverLine) {
+      // Show the auto-hover throttle level as a dashed line
+      Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+      const hoverPct = hoverThrottle(drone.config, scratch.cartographic.height) * 100;
+      tgHoverLine.style.bottom = Math.min(100, Math.max(0, hoverPct)) + '%';
+    }
+    if (tgPercent) {
+      tgPercent.textContent = `${(drone.throttle * 100).toFixed(0)}%`;
+    }
   }
 
+  // ### Teleport — instantly moves the drone to a new location
   function resetPosition() {
     teleportTo(START_LOCATION);
   }
@@ -674,17 +887,27 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       location.latitude,
       location.height,
     );
-    drone.horizontalVelocity = new Cesium.Cartesian3(0.0, 0.0, 0.0);
+    drone.horizontalVelocity.x = 0.0;
+    drone.horizontalVelocity.y = 0.0;
+    drone.horizontalVelocity.z = 0.0;
     drone.verticalSpeed = 0.0;
     drone.heading = Cesium.Math.toRadians(200.0);
     drone.visualPitch = 0.0;
     drone.visualRoll = 0.0;
+
+    // Reset wind model state
+    wind.reset();
+
+    // Reset throttle to hover at new altitude
+    drone.throttle = hoverThrottle(drone.config, location.height);
+
     updateDroneOrientation();
     updateHorizontalAxes();
     updateWorldAxes();
     updateCamera();
   }
 
+  // ### Keyboard and button handlers — connects user input to drone actions
   function setupInputHandlers() {
     document.addEventListener("keydown", (event) => {
       keyState.add(event.code);
@@ -716,26 +939,11 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
           setFlightStatus("Creative Mode active. G to return to drone.", false);
         }
       }
-      // Speed tier keys: 1 = 1x, 2 = 3x, 3 = 5x, 4 = 10x
-      if (event.code === "Digit1") setSpeedTier(0);
-      if (event.code === "Digit2") setSpeedTier(1);
-      if (event.code === "Digit3") setSpeedTier(2);
-      if (event.code === "Digit4") setSpeedTier(3);
-      if (event.code === "Digit5") setSpeedTier(4);
     });
 
     document.addEventListener("keyup", (event) => {
       keyState.delete(event.code);
     });
-
-    // Speed tier button clicks
-    SPEED_TIERS.forEach((tier, i) => {
-      const btn = document.getElementById(`speed-btn-${tier}`);
-      if (btn) {
-        btn.addEventListener("click", () => setSpeedTier(i));
-      }
-    });
-    updateSpeedTierHUD();
 
     const ucdBtn = document.getElementById("teleport-ucd");
     if (ucdBtn) {
@@ -746,8 +954,72 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
         ucdBtn.blur();
       });
     }
+
+    const beuBtn = document.getElementById("teleport-beu");
+    if (beuBtn) {
+      beuBtn.addEventListener("click", () => {
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
+        teleportTo(BEU_LOCATION);
+        setFlightStatus("Teleported to BEU (San Benito-Monterey) fire perimeter region.", false);
+        beuBtn.blur();
+      });
+    }
+
+    const airlineBtn = document.getElementById("teleport-airline");
+    if (airlineBtn) {
+      airlineBtn.addEventListener("click", () => {
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
+        teleportTo(AIRLINE_FIRE_LOCATION);
+        setFlightStatus("Teleported to Airline Fire incident area (July 2024).", false);
+        airlineBtn.blur();
+      });
+    }
+
+    const cloudBtn = document.getElementById("cloud-toggle-btn");
+    if (cloudBtn) {
+      cloudBtn.addEventListener("click", () => {
+        cloudsOn = !cloudsOn;
+        setCloudsEnabled(cloudsOn);
+        cloudBtn.textContent = cloudsOn ? "ON" : "OFF";
+        cloudBtn.classList.toggle("active", cloudsOn);
+        cloudBtn.blur();
+      });
+    }
+
+    /* ─── AGL ceiling grid toggle ─── */
+    const aglCeilingBtn = document.getElementById("agl-ceiling-btn");
+    if (aglCeilingBtn) {
+      aglCeilingBtn.addEventListener("click", () => {
+        const on = toggleAglCeiling();
+        aglCeilingBtn.textContent = on ? "ON" : "OFF";
+        aglCeilingBtn.classList.toggle("active", on);
+        aglCeilingBtn.blur();
+      });
+    }
+
+    /* ─── Incident overlay panel buttons ─── */
+    const incidentToggleBtn = document.getElementById("incident-toggle-btn");
+    if (incidentToggleBtn) {
+      incidentToggleBtn.addEventListener("click", () => {
+        const vis = toggleIncidentOverlay();
+        incidentToggleBtn.textContent = vis ? "HIDE" : "SHOW";
+        incidentToggleBtn.classList.toggle("active", vis);
+        incidentToggleBtn.blur();
+      });
+    }
+
+    const incidentTeleportBtn = document.getElementById("incident-teleport-btn");
+    if (incidentTeleportBtn) {
+      incidentTeleportBtn.addEventListener("click", () => {
+        if (isCreativeModeActive()) { exitCreativeMode(); setHighlightVisible(false); }
+        teleportTo(AIRLINE_FIRE_LOCATION);
+        setFlightStatus("Teleported to Airline Fire incident area (July 2024).", false);
+        incidentTeleportBtn.blur();
+      });
+    }
   }
 
+  // ### Cesium viewer setup — creates the 3D globe with terrain, buildings, and sky rendering
   async function buildViewer() {
     let terrainProvider = new Cesium.EllipsoidTerrainProvider();
     try {
@@ -818,7 +1090,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     viewer.clock.multiplier = 0;
 
     if (viewer.scene.postProcessStages && viewer.scene.postProcessStages.fxaa) {
-      viewer.scene.postProcessStages.fxaa.enabled = true;
+      viewer.scene.postProcessStages.fxaa.enabled = false;
     }
     if ("msaaSamples" in viewer.scene) {
       viewer.scene.msaaSamples = 1;
@@ -828,63 +1100,48 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     viewer.camera.frustum.fov = Cesium.Math.toRadians(119.6);
   }
 
+  // ### World detail layers — loads Google 3D tiles (photorealistic buildings) and OpenStreetMap buildings
   async function loadWorldDetailLayers() {
     let datasetStatus = "Cesium World Terrain";
-    let usedGooglePhotorealisticTiles = false;
+    let usedCesium3DTiles = false;
 
-    if (
-      configuredGoogleApiKey &&
-      Cesium.GoogleMaps &&
-      typeof Cesium.createGooglePhotorealistic3DTileset === "function"
-    ) {
-      try {
-        Cesium.GoogleMaps.defaultApiKey = configuredGoogleApiKey;
-        let googleTiles = null;
-        try {
-          googleTiles = await Cesium.createGooglePhotorealistic3DTileset({
-            onlyUsingWithGoogleGeocoder: true,
-          });
-        } catch (innerError) {
-          googleTiles = await Cesium.createGooglePhotorealistic3DTileset();
-          console.warn(
-            "Google tile policy option failed, loaded tileset with default options:",
-            innerError,
-          );
-        }
-        viewer.scene.primitives.add(googleTiles);
-        googleTilesRef = googleTiles;  // keep reference for cloud occlusion
+    // Load Google Photorealistic 3D Tiles via Cesium Ion (asset 2275207)
+    // Authenticated through the Cesium Ion token — no separate Google API key needed.
+    try {
+      const tiles = await Cesium.Cesium3DTileset.fromIonAssetId(2275207);
+      viewer.scene.primitives.add(tiles);
+      cesiumTilesRef = tiles;  // keep reference for cloud occlusion
 
-        // ── Flight-sim LOD: HD nearby, aggressively degrade distant tiles ──
-        googleTiles.maximumScreenSpaceError = 4;
-        // Dynamic SSE: increase error tolerance for tiles near the horizon
-        googleTiles.dynamicScreenSpaceError = true;
-        googleTiles.dynamicScreenSpaceErrorDensity = 2.46e-4;
-        googleTiles.dynamicScreenSpaceErrorFactor = 24.0;
-        googleTiles.dynamicScreenSpaceErrorHeightFalloff = 0.25;
-        // Foveated: prioritize center-of-screen tile loading
-        googleTiles.foveatedScreenSpaceError = true;
-        googleTiles.foveatedConeSize = 0.1;
-        googleTiles.foveatedMinimumScreenSpaceErrorRelaxation = 0.0;
-        googleTiles.foveatedTimeDelay = 0.2;
-        // Aggressively cull tile requests while camera is in motion
-        googleTiles.cullRequestsWhileMoving = true;
-        googleTiles.cullRequestsWhileMovingMultiplier = 60.0;
-        // Memory budget
-        googleTiles.cacheBytes = 512 * 1024 * 1024;
-        googleTiles.maximumCacheOverflowBytes = 256 * 1024 * 1024;
-        // Progressive: show low-res placeholders first, then refine
-        googleTiles.progressiveResolutionHeightFraction = 0.3;
-        googleTiles.preloadFlightDestinations = true;
-        googleTiles.preferLeaves = false;
+      // ── Flight-sim LOD: HD nearby, aggressively degrade distant tiles ──
+      tiles.maximumScreenSpaceError = 4;
+      // Dynamic SSE: increase error tolerance for tiles near the horizon
+      tiles.dynamicScreenSpaceError = true;
+      tiles.dynamicScreenSpaceErrorDensity = 2.46e-4;
+      tiles.dynamicScreenSpaceErrorFactor = 24.0;
+      tiles.dynamicScreenSpaceErrorHeightFalloff = 0.25;
+      // Foveated: prioritize center-of-screen tile loading
+      tiles.foveatedScreenSpaceError = true;
+      tiles.foveatedConeSize = 0.1;
+      tiles.foveatedMinimumScreenSpaceErrorRelaxation = 0.0;
+      tiles.foveatedTimeDelay = 0.2;
+      // Aggressively cull tile requests while camera is in motion
+      tiles.cullRequestsWhileMoving = true;
+      tiles.cullRequestsWhileMovingMultiplier = 60.0;
+      // Memory budget
+      tiles.cacheBytes = 512 * 1024 * 1024;
+      tiles.maximumCacheOverflowBytes = 256 * 1024 * 1024;
+      // Progressive: show low-res placeholders first, then refine
+      tiles.progressiveResolutionHeightFraction = 0.3;
+      tiles.preloadFlightDestinations = true;
+      tiles.preferLeaves = false;
 
-        datasetStatus = "Google Photorealistic 3D Tiles + Cesium lighting";
-        usedGooglePhotorealisticTiles = true;
-      } catch (error) {
-        console.warn("Google Photorealistic 3D Tiles failed to load:", error);
-      }
+      datasetStatus = "Google Photorealistic 3D Tiles (via Cesium Ion) + Cesium lighting";
+      usedCesium3DTiles = true;
+    } catch (error) {
+      console.warn("Cesium Ion 3D Tiles (asset 2275207) failed to load:", error);
     }
 
-    if (!usedGooglePhotorealisticTiles) {
+    if (!usedCesium3DTiles) {
       try {
         const osmBuildings = await Cesium.createOsmBuildingsAsync();
         viewer.scene.primitives.add(osmBuildings);
@@ -913,6 +1170,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
   }
 
   /* ─── Cloud Immersion Update ─── */
+  // ### Cloud fog overlay — white screen effect when flying through clouds
   function createCloudFogOverlay() {
     cloudFogOverlay = document.createElement('div');
     cloudFogOverlay.id = 'cloud-fog-overlay';
@@ -937,6 +1195,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     document.body.insertBefore(cloudFogOverlay, document.getElementById('hud'));
   }
 
+  // ### FPV overlay — the on-screen telemetry display shown in first-person camera mode
   function createFpvOverlay() {
     fpvOverlay = document.createElement('div');
     fpvOverlay.id = 'fpv-overlay';
@@ -999,7 +1258,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     `;
 
     fpvHudAlt = document.createElement('span');
-    fpvHudAlt.textContent = 'ALT 0.0 m';
+    fpvHudAlt.textContent = 'ALT 0 ft';
     fpvHudSpd = document.createElement('span');
     fpvHudSpd.textContent = 'SPD 0.0 m/s';
 
@@ -1035,8 +1294,22 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     }
   }
 
+  // ### Cloud immersion — smoothly fades in fog and hides terrain when inside clouds
   function updateCloudImmersion(dt) {
     if (!cloudFogOverlay || !viewer) return;
+
+    // When clouds are toggled off, force everything clear and bail
+    if (!cloudsOn) {
+      cloudFogOverlay.style.opacity = '0';
+      currentCloudImmersion = 0;
+      currentCesiumFade = 1;
+      if (viewer.scene.globe) viewer.scene.globe.show = true;
+      if (cesiumTilesRef) cesiumTilesRef.show = true;
+      if (osmBuildingsRef) osmBuildingsRef.show = true;
+      viewer.scene.fog.enabled = true;
+      viewer.scene.fog.density = 0.0003;
+      return;
+    }
 
     // Get current altitude MSL from the drone's cartographic position
     Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
@@ -1087,8 +1360,8 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     }
 
     // Apply visibility to 3D tile primitives
-    if (googleTilesRef) {
-      googleTilesRef.show = currentCesiumFade > 0.01;
+    if (cesiumTilesRef) {
+      cesiumTilesRef.show = currentCesiumFade > 0.01;
     }
     if (osmBuildingsRef) {
       osmBuildingsRef.show = currentCesiumFade > 0.01;
@@ -1106,6 +1379,7 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
     }
   }
 
+  // ### Main game loop — runs every frame (~60 times per second), drives all simulation
   function stepFrame(now) {
     const dt = Math.min(0.033, Math.max(0.001, (now - lastTime) / 1000.0));
     lastTime = now;
@@ -1117,16 +1391,21 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       updateHorizontalAxes();
       applyDroneMovement(dt);
       enforceTerrainClearance();
+      enforceAglCeiling();
       updateHorizontalAxes();     // recompute at final position
       updateDroneOrientation();
       updateWorldAxes();
       enforceBuildingCollision();
+      updateAglCeiling();
       updateCamera();
     }
     updateHudReadout();
 
     // Update cloud immersion effects (fog overlay + Cesium visibility)
     updateCloudImmersion(dt);
+
+    // Update gyroscopic mini-map
+    updateMinimap();
 
     // Adaptive resolution scaling to maintain smooth FPS
     updateDynamicResolution(dt);
@@ -1143,11 +1422,141 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       droneModelOrientation,
     );
 
+    // Send drone position to MAVLink GPS bridge (throttled to 10 Hz)
+    sendMavBridgePosition();
+
     // Render the three-geospatial atmospheric overlay in sync with the Cesium camera.
     // Wrapped in try-catch so overlay errors never break the flight loop.
     try { updateGeospatialOverlay(viewer); } catch (_) { }
   }
 
+  /* ─── Gyroscopic Mini-map ─── */
+  // ### Mini-map — draws a small rotating compass map in the corner showing drone position and fire perimeter
+  function updateMinimap() {
+    if (!minimapCtx || !viewer) return;
+
+    const w = minimapCanvas.width;
+    const h = minimapCanvas.height;
+    const cx = w / 2;
+    const cy = h / 2;
+
+    // Get drone lat/lon
+    Cesium.Cartographic.fromCartesian(drone.position, Cesium.Ellipsoid.WGS84, scratch.cartographic);
+    const droneLon = Cesium.Math.toDegrees(scratch.cartographic.longitude);
+    const droneLat = Cesium.Math.toDegrees(scratch.cartographic.latitude);
+    const headingRad = drone.heading;
+
+    // Zoom: show ~50% of the perimeter extent (half of the lon/lat range)
+    const bounds = MINIMAP_PERIM_BOUNDS;
+    const lonSpan = bounds.maxLon - bounds.minLon;
+    const latSpan = bounds.maxLat - bounds.minLat;
+    const halfSpan = Math.max(lonSpan, latSpan) * 0.5;
+    const scale = (w * 0.45) / halfSpan;  // degrees → pixels
+
+    // Clear
+    minimapCtx.clearRect(0, 0, w, h);
+
+    // Draw in rotated coordinate system (heading-up)
+    minimapCtx.save();
+    minimapCtx.translate(cx, cy);
+    minimapCtx.rotate(-headingRad);  // rotate map so heading faces up
+
+    // Helper: geo (lon/lat) → local pixel offset relative to drone
+    const geoToLocal = (lon, lat) => {
+      const dx = (lon - droneLon) * scale;
+      const dy = -(lat - droneLat) * scale;  // y inverted
+      return [dx, dy];
+    };
+
+    // Draw perimeter polygon
+    if (minimapPerimCoords && minimapPerimCoords.length > 2) {
+      minimapCtx.beginPath();
+      const [fx, fy] = geoToLocal(minimapPerimCoords[0].lon, minimapPerimCoords[0].lat);
+      minimapCtx.moveTo(fx, fy);
+      // Subsample for performance (71k points is too many for canvas)
+      const step = Math.max(1, Math.floor(minimapPerimCoords.length / 800));
+      for (let i = step; i < minimapPerimCoords.length; i += step) {
+        const [px, py] = geoToLocal(minimapPerimCoords[i].lon, minimapPerimCoords[i].lat);
+        minimapCtx.lineTo(px, py);
+      }
+      minimapCtx.closePath();
+      minimapCtx.fillStyle = 'rgba(255, 60, 60, 0.15)';
+      minimapCtx.fill();
+      minimapCtx.strokeStyle = 'rgba(255, 80, 80, 0.7)';
+      minimapCtx.lineWidth = 1.5;
+      minimapCtx.stroke();
+    }
+
+    minimapCtx.restore();
+
+    // Draw drone indicator (always at center, pointing up)
+    minimapCtx.save();
+    minimapCtx.translate(cx, cy);
+    // Arrow pointing up
+    minimapCtx.beginPath();
+    minimapCtx.moveTo(0, -8);
+    minimapCtx.lineTo(-5, 6);
+    minimapCtx.lineTo(0, 3);
+    minimapCtx.lineTo(5, 6);
+    minimapCtx.closePath();
+    minimapCtx.fillStyle = '#82e3ff';
+    minimapCtx.fill();
+    minimapCtx.strokeStyle = '#fff';
+    minimapCtx.lineWidth = 1;
+    minimapCtx.stroke();
+    minimapCtx.restore();
+
+    // Draw dynamic cardinal directions (rotate with heading)
+    minimapCtx.save();
+    minimapCtx.translate(cx, cy);
+    minimapCtx.rotate(-headingRad);
+    minimapCtx.font = 'bold 11px "Space Mono", monospace';
+    minimapCtx.textAlign = 'center';
+    minimapCtx.textBaseline = 'middle';
+    const cardR = w * 0.44;
+    // N (red), S, E, W (muted)
+    minimapCtx.fillStyle = '#ff6666';
+    minimapCtx.fillText('N', 0, -cardR);
+    minimapCtx.fillStyle = 'rgba(159, 190, 226, 0.7)';
+    minimapCtx.fillText('S', 0, cardR);
+    minimapCtx.fillText('E', cardR, 0);
+    minimapCtx.fillText('W', -cardR, 0);
+    minimapCtx.restore();
+  }
+
+  /* ─── Fire Perimeter Overlay (GeoJSON) ─── */
+  // ### Fire perimeter — loads the real wildfire boundary from a GeoJSON file for the mini-map
+  async function loadFirePerimeters() {
+    try {
+      const response = await fetch('/assets/firePerimeters.geojson');
+      const geojson = await response.json();
+
+      // Filter client-side: only the San Benito-Monterey (BEU) unit
+      const beuFeature = geojson.features.find(f => f.properties.UNITCODE === 'BEU');
+      if (!beuFeature) {
+        console.warn('[firePerimeters] BEU feature not found in GeoJSON');
+        return;
+      }
+
+      console.log('[firePerimeters] Loaded BEU region:', beuFeature.properties.UNIT);
+
+      // Build coordinate array from the polygon's outer ring (for minimap only)
+      const ring = beuFeature.geometry.coordinates[0];
+      minimapPerimCoords = [];
+      for (const [lon, lat] of ring) {
+        minimapPerimCoords.push({ lon, lat });
+      }
+
+      // No 3D overlay is added to the Cesium globe — the perimeter is shown
+      // only on the 2D minimap canvas to avoid obscuring terrain / 3D tiles.
+
+      console.log('[firePerimeters] BEU perimeter loaded for minimap (' + minimapPerimCoords.length + ' points).');
+    } catch (err) {
+      console.error('[firePerimeters] Failed to load fire perimeters:', err);
+    }
+  }
+
+  // ### Initialization — sets up everything and starts the main loop
   async function init() {
     HUD.datasetStatus.textContent = "Booting Cesium viewer and streaming terrain...";
     try {
@@ -1173,6 +1582,35 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       createFpvOverlay();
       initCreativeMode(viewer);
 
+      // Load the fire perimeter overlay (non-blocking)
+      loadFirePerimeters();
+
+      // Initialize incident overlay (beacons, route, labels)
+      initIncidentOverlay(viewer);
+      buildIncidentLegend();
+      initAglCeiling(viewer, START_LOCATION.longitude, START_LOCATION.latitude, drone.lastGroundHeight);
+
+      // Connect to MAVLink GPS bridge (WebSocket on port 8089)
+      initMavBridge();
+
+      // Initialize mini-map canvas
+      minimapCanvas = document.getElementById('minimap');
+      if (minimapCanvas) {
+        minimapCtx = minimapCanvas.getContext('2d');
+      }
+
+      // Sample accurate terrain height at spawn before starting the flight loop
+      try {
+        const spawnCarto = Cesium.Cartographic.fromDegrees(START_LOCATION.longitude, START_LOCATION.latitude);
+        const results = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, [spawnCarto]);
+        const terrainH = results[0].height;
+        if (Number.isFinite(terrainH) && terrainH > 0) {
+          drone.lastGroundHeight = terrainH;
+        }
+      } catch (e) {
+        console.warn('[init] Terrain sampling at spawn failed:', e);
+      }
+
       resetPosition();
       lastTime = performance.now();
 
@@ -1193,7 +1631,10 @@ import { initCreativeMode, isCreativeModeActive, enterCreativeMode, exitCreative
       // Initialize the three-geospatial atmospheric overlay asynchronously.
       // This precomputes atmosphere textures and streams cloud data — it can
       // take several seconds but must never block the flight loop.
-      initGeospatialOverlay(viewer).catch((err) => {
+      initGeospatialOverlay(viewer).then(() => {
+        // Clouds default to off
+        setCloudsEnabled(false);
+      }).catch((err) => {
         console.error('[init] Atmospheric overlay failed to initialize:', err);
       });
     } catch (error) {

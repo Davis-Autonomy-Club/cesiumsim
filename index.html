@@ -62,40 +62,51 @@
       <div>Speed</div>
       <div id="hud-speed">0.0 km/h</div>
       <div>Altitude (AGL)</div>
-      <div id="hud-altitude-agl">0.0 m</div>
+      <div id="hud-altitude-agl">0 ft</div>
       <div>Altitude (MSL)</div>
-      <div id="hud-altitude-msl">0.0 m</div>
-      <div>Heading</div>
-      <div id="hud-heading">0.0 deg</div>
-      <div>Pitch / Roll</div>
-      <div id="hud-attitude">0.0 deg / 0.0 deg</div>
-      <div>Lat / Lon</div>
-      <div id="hud-position">0.00000, 0.00000</div>
-      <div>Speed Tier</div>
-      <div id="hud-speed-tier">1x</div>
+      <div id="hud-altitude-msl">0 ft</div>
+      <div>Bldg Collision</div>
+      <div id="hud-building-col">OFF</div>
+      <div>AGL Ceiling</div>
+      <div id="hud-agl-ceiling">ON</div>
+      <div>Air Density</div>
+      <div id="hud-density">1.225 kg/m³</div>
+      <div>Throttle</div>
+      <div id="hud-throttle">50%</div>
     </div>
   </section>
 
-  <div id="gemini-overlay">
-    <div id="gemini-header">Gemini Autopilot</div>
-    <div id="gemini-text">Waiting for response...</div>
+  <!-- Throttle bar gauge -->
+  <div id="throttle-gauge">
+    <div class="tg-label">THR</div>
+    <div class="tg-track">
+      <div id="tg-hover-line" class="tg-hover-line"></div>
+      <div id="tg-fill" class="tg-fill"></div>
+    </div>
+    <div id="tg-percent" class="tg-percent">50%</div>
   </div>
 
   <section id="status-panel">
     <div class="panel-title">Simulation Status</div>
     <p id="dataset-status">Initializing high-fidelity world data...</p>
     <p id="flight-status">Flight controls active.</p>
-    <div id="speed-tier-bar">
-      <span class="speed-tier-label">Speed</span>
-      <button id="speed-btn-1" class="speed-btn active" type="button">1x</button>
-      <button id="speed-btn-3" class="speed-btn" type="button">3x</button>
-      <button id="speed-btn-5" class="speed-btn" type="button">5x</button>
-      <button id="speed-btn-10" class="speed-btn" type="button">10x</button>
-    </div>
     <div id="teleport-bar"
       style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
       <span class="speed-tier-label">Teleport</span>
       <button id="teleport-ucd" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">UC Davis</button>
+      <button id="teleport-beu" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">BEU</button>
+      <button id="teleport-airline" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">Airline
+        Fire</button>
+    </div>
+    <div id="cloud-toggle-bar"
+      style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
+      <span class="speed-tier-label">Clouds</span>
+      <button id="cloud-toggle-btn" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">OFF</button>
+    </div>
+    <div id="agl-ceiling-bar"
+      style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
+      <span class="speed-tier-label">400ft Grid</span>
+      <button id="agl-ceiling-btn" class="speed-btn active" type="button" style="padding: 0.32rem 0.5rem;">ON</button>
     </div>
     <div id="playground-bar"
       style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
@@ -128,8 +139,7 @@
       <p><code>W</code> ascend | <code>S</code> descend</p>
       <p><code>↑ ↓</code> forward / backward | <code>← →</code> yaw</p>
       <p><code>A</code> strafe left | <code>D</code> strafe right</p>
-      <p><code>C</code> toggle FPV camera | <code>V</code> Gemini vision</p>
-      <p><code>1 2 3 4</code> speed tier</p>
+      <p><code>C</code> FPV camera | <code>G</code> creative mode</p>
     </div>
   </section>
 

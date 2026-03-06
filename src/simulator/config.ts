@@ -1,7 +1,5 @@
 export const DEFAULT_CESIUM_TOKEN = import.meta.env.VITE_CESIUM_TOKEN ?? "";
 
-export const DEFAULT_GOOGLE_MAPS_API_KEY =
-  import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? "";
 
 export const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY ?? "";
 

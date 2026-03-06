@@ -1,8 +1,9 @@
-// creative-mode/creative-mode.js
-// Free-camera mode for agricultural land segmentation with highlighted areas.
-// The camera detaches from the drone and moves independently using the same controls.
-// A translucent red 3D prism highlights the target agriculture area.
+// ### What this file does
+// A free-flying camera mode that detaches from the drone. Used for inspecting
+// agricultural zones at UC Davis. The camera moves with the same keyboard controls
+// but is not bound to the drone. Highlighted 3D boxes mark areas of interest.
 
+// ### State and camera settings
 let _active = false;
 let _highlightEntities = [];
 
@@ -34,7 +35,7 @@ const _s = {
   cartographic: new Cesium.Cartographic(),
 };
 
-// UC Davis agriculture highlight zones
+// ### Areas of interest — GPS coordinates for highlighted zones at UC Davis
 const HIGHLIGHT_ZONES = [
   {
     coords: [
@@ -60,6 +61,7 @@ const HIGHLIGHT_ZONES = [
   },
 ];
 
+// ### Create the 3D highlight boxes and labels on the map (hidden until mode is activated)
 export function initCreativeMode(viewer) {
   for (const zone of HIGHLIGHT_ZONES) {
     // Polygon box
@@ -104,6 +106,7 @@ export function initCreativeMode(viewer) {
   }
 }
 
+// ### Mode toggling — enter/exit creative mode, show/hide highlights
 export function isCreativeModeActive() {
   return _active;
 }
@@ -128,6 +131,7 @@ export function exitCreativeMode() {
   _freeCam.verticalSpeed = 0.0;
 }
 
+// ### Math to figure out which direction is "forward" and "right" based on camera heading
 function _updateHorizontalAxes() {
   Cesium.Transforms.eastNorthUpToFixedFrame(
     _freeCam.position, Cesium.Ellipsoid.WGS84, _s.transform,
@@ -145,6 +149,7 @@ function _updateHorizontalAxes() {
   Cesium.Cartesian3.normalize(_s.horizontalRight, _s.horizontalRight);
 }
 
+// ### Per-frame update — reads keyboard input, moves the free camera, prevents going underground
 export function updateCreativeMode(dt, keyState, speedMultiplier, FLIGHT, viewer) {
   const isDown = (code) => keyState.has(code);
   const sm = speedMultiplier;
@@ -258,6 +263,7 @@ export function updateCreativeMode(dt, keyState, speedMultiplier, FLIGHT, viewer
   });
 }
 
+// ### HUD data — returns speed, altitude, and position for the on-screen display
 export function getFreeCamReadout() {
   Cesium.Cartographic.fromCartesian(_freeCam.position, Cesium.Ellipsoid.WGS84, _s.cartographic);
   return {
