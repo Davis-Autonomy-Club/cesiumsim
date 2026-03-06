@@ -1,0 +1,311 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/robots/bitcraze/crazyflie/protos/Crazyflie.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/trees/protos/Pine.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/trees/protos/Oak.proto"
+
+WorldInfo {
+  title "Benchmark 2: Canyon Terrain Navigation"
+  basicTimeStep 2
+  FPS 20
+}
+Viewpoint {
+  orientation -0.19900743804199786 0.3980148760839957 0.8955334711889904 1.2
+  position -0.09629890597242685 -0.19490942634240582 0.1313503428225784
+  follow "Crazyflie"
+  followSmoothness 0.01
+}
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+DEF GROUND Solid {
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.55 0.5 0.42
+        roughness 1
+        metalness 0
+      }
+      geometry DEF GROUND_PLANE Plane {
+        size 300 300
+      }
+    }
+  ]
+  boundingObject USE GROUND_PLANE
+  locked TRUE
+}
+Crazyflie {
+  hidden linearVelocity_0 7.001320987530008e-19 9.637552931113752e-20 -1.1102230246251614e-17
+  hidden angularVelocity_0 6.1506498703950764e-30 7.434529182756265e-17 -8.16840243153094e-18
+  translation -3.288077377944066e-19 -1.2329311422457624e-19 0.01499877375
+  rotation 1.2761404187467602e-19 1.8433197560190345e-19 1 1.8326
+  controller "ardupilot_vehicle_controller"
+  controllerArgs [
+    "--motors"
+    "m1_motor, m3_motor, m4_motor, m2_motor"
+    "--reversed-motors"
+    "1, 2"
+    "--camera-fps"
+    "10"
+    "--camera"
+    "camera"
+    "--camera-port"
+    "5599"
+    "--accel"
+    "accelerometer"
+    "--imu"
+    "inertial unit"
+    "--gyro"
+    "gyro"
+    "--gps"
+    "gps"
+    "--motor-cap"
+    "100"
+  ]
+  extensionSlot [
+    Accelerometer {
+    }
+  ]
+}
+Solid {
+  translation -18 30 7
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.52 0.47 0.4
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 8 80 14
+      }
+    }
+  ]
+  name "ridge_left"
+  boundingObject Box {
+    size 8 80 14
+  }
+}
+Solid {
+  translation 38 30 8
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.5 0.45 0.38
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 8 80 16
+      }
+    }
+  ]
+  name "ridge_right"
+  boundingObject Box {
+    size 8 80 16
+  }
+}
+Solid {
+  translation 60 50 7
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.48 0.43 0.37
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 20 20 14
+      }
+    }
+  ]
+  name "elevated_plateau"
+  boundingObject Box {
+    size 20 20 14
+  }
+}
+Solid {
+  translation 60 50 14.1
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.6 0.55 0.48
+        roughness 0.9
+        metalness 0
+      }
+      geometry Box {
+        size 20 20 0.2
+      }
+    }
+  ]
+  name "plateau_top"
+  boundingObject Box {
+    size 20 20 0.2
+  }
+}
+Solid {
+  translation 60 50 15.698773750000003
+  rotation -0.14456000040381803 0.970119520785179 -0.1948602619180796 3.481279285931659e-18
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.9 0.1 0.1
+        roughness 0.4
+        metalness 0
+      }
+      geometry Box {
+        size 3 3 3
+      }
+    }
+  ]
+  name "target_red_crate"
+  boundingObject Box {
+    size 3 3 3
+  }
+  physics Physics {
+    density -1
+    mass 50
+  }
+  linearVelocity -3.8113534043314267e-19 7.658821698180993e-19 -2.9021429939372204e-13
+  angularVelocity 5.7777898331617076e-34 1.5158245029548827e-18 -2.9992167057009264e-19
+}
+Solid {
+  translation 10 20 4
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.47 0.44 0.4
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 4 4 8
+      }
+    }
+  ]
+  name "rock_spire_1"
+  boundingObject Box {
+    size 4 4 8
+  }
+}
+Solid {
+  translation 18 40 5
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.5 0.46 0.41
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 5 5 10
+      }
+    }
+  ]
+  name "rock_spire_2"
+  boundingObject Box {
+    size 5 5 10
+  }
+}
+Solid {
+  translation 8 55 3
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.48 0.44 0.39
+        roughness 1
+        metalness 0
+      }
+      geometry Box {
+        size 4 4 6
+      }
+    }
+  ]
+  name "rock_spire_3"
+  boundingObject Box {
+    size 4 4 6
+  }
+}
+Solid {
+  translation 5 15 2
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.45 0.43 0.4
+        roughness 1
+        metalness 0
+      }
+      geometry Sphere {
+        radius 3.5
+        subdivision 2
+      }
+    }
+  ]
+  name "boulder_1"
+  boundingObject Sphere {
+    radius 3.5
+  }
+}
+Solid {
+  translation 22 35 2.5
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.46 0.44 0.41
+        roughness 1
+        metalness 0
+      }
+      geometry Sphere {
+        radius 4
+        subdivision 2
+      }
+    }
+  ]
+  name "boulder_2"
+  boundingObject Sphere {
+    radius 4
+  }
+}
+Solid {
+  translation 14 60 2
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0.47 0.44 0.4
+        roughness 1
+        metalness 0
+      }
+      geometry Sphere {
+        radius 3
+        subdivision 2
+      }
+    }
+  ]
+  name "boulder_3"
+  boundingObject Sphere {
+    radius 3
+  }
+}
+Pine {
+  translation -5 10 0
+  name "pine_1"
+}
+Oak {
+  translation 25 8 0
+  name "oak_1"
+}
+Pine {
+  translation -8 45 0
+  name "pine_2"
+}
+Oak {
+  translation 28 55 0
+  name "oak_2"
+}
+Pine {
+  translation 15 65 0
+  name "pine_3"
+}

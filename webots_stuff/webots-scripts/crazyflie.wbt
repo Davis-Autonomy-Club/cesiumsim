@@ -1,0 +1,85 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/robots/bitcraze/crazyflie/protos/Crazyflie.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackground.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/backgrounds/protos/TexturedBackgroundLight.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2023a/projects/objects/floors/protos/Floor.proto"
+
+WorldInfo {
+  title "Crazyflie Ardupilot"
+  basicTimeStep 2
+  FPS 20
+}
+
+Viewpoint {
+  orientation -0.15548519917717582 0.3004908527032824 0.9410258233855691 1.0054794663023672
+  position -0.1467193020184297 -0.20736740908220053 0.09719421146605083
+  follow "Crazyflie"
+  followSmoothness 0.01
+}
+
+TexturedBackground {
+}
+TexturedBackgroundLight {
+}
+
+Floor {
+  size 200 200
+  tileSize 300 200
+}
+
+Crazyflie {
+  rotation 0 0 1 -1.57079632679
+  controller "ardupilot_vehicle_controller"
+  controllerArgs [
+    "--motors"
+    "m1_motor, m3_motor, m4_motor, m2_motor"
+    "--reversed-motors"
+    "1, 2"
+    "--camera-fps"
+    "10"
+    "--camera"
+    "camera"
+    "--camera-port"
+    "5599"
+    "--accel"
+    "accelerometer"
+    "--imu"
+    "inertial unit"
+    "--gyro"
+    "gyro"
+    "--gps"
+    "gps"
+    "--motor-cap"
+    "100"
+  ]
+  extensionSlot [
+    Accelerometer {
+    }
+  ]
+}
+
+Solid {
+  translation 100 100 25
+  rotation 0 0 1 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 0 0.0359197 0.609552
+        roughness 0.8
+        metalness 0
+      }
+      geometry Box {
+        size 2 5 50
+      }
+    }
+  ]
+  name "wooden_box"
+  boundingObject Box {
+    size 2 5 50
+  }
+  physics Physics {
+    density -1
+    mass 5
+  }
+}

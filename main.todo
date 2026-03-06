@@ -1,0 +1,13 @@
+Across all benchmarks
+☐ Some boxes are "translucent". Increase opacity
+☐ Drone isn't facing the area. Rather it's facing the opposite direction
+☐ Find a way to put an error dialog if the drone collided with a specific object
+
+B1
+☐ Make the forest more dense and wide, otherwise it would be super easy for the drone to just laterally navigate through
+
+B2
+☐ 
+
+B3
+☐ Make it more dense and wide. The entire purpose is to force the drone to navigate through

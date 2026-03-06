@@ -8,17 +8,53 @@
   <link rel="stylesheet" href="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Widgets/widgets.css" />
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cesium.com/downloads/cesiumjs/releases/1.117/Build/Cesium/Cesium.js"></script>
-  <script type="module" src="./app.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </head>
 
 <body>
   <div id="cesiumContainer"></div>
 
-  <!-- Mini-map + coordinates -->
-  <div id="minimap-container">
-    <canvas id="minimap" width="220" height="220"></canvas>
-    <div id="minimap-coords">0.00000, 0.00000</div>
-  </div>
+  <section id="benchmark-runner-panel">
+    <div class="panel-title">Benchmark Runner</div>
+    <div class="control-group">
+      <label for="benchmark-max-time">Max Success Time (s)</label>
+      <input type="number" id="benchmark-max-time" value="30" min="5" max="600" />
+    </div>
+    <button id="run-benchmark-btn" class="run-btn" type="button">Run Benchmark</button>
+    <button id="run-benchmark-batch-btn" class="run-btn batch-btn" type="button"
+      style="margin-top: 0.5rem; background: #5a2a8a;">Run Benchmark Batch</button>
+
+    <div id="batch-setup-container"
+      style="display: none; margin-top: 1rem; border-top: 1px solid var(--bg-panel-border); padding-top: 1rem;">
+      <div class="panel-subtitle"
+        style="font-size: 0.8rem; color: var(--accent); margin-bottom: 0.5rem; text-transform: uppercase;">Batch Setup
+      </div>
+      <table id="batch-trials-table"
+        style="width: 100%; font-size: 0.75rem; border-collapse: collapse; margin-bottom: 0.8rem;">
+        <thead>
+          <tr style="text-align: left; color: var(--text-muted); border-bottom: 1px solid rgba(133, 175, 255, 0.2);">
+            <th style="padding: 0.3rem;">Trial</th>
+            <th style="padding: 0.3rem;">Time (s)</th>
+            <th style="padding: 0.3rem;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Dynamic rows -->
+        </tbody>
+      </table>
+      <div
+        style="margin-bottom: 0.8rem; font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.3rem;">
+        <input type="checkbox" id="batch-auto-proceed" checked />
+        <label for="batch-auto-proceed" style="cursor: pointer;">Auto-proceed to next trial</label>
+      </div>
+      <div style="display: flex; gap: 0.5rem;">
+        <button id="add-trial-btn" class="speed-btn" style="flex: 1;">+ Add Trial</button>
+        <button id="start-batch-btn" class="run-btn" style="flex: 2; background: #4ade80; color: #02050a;">Start
+          Batch</button>
+      </div>
+    </div>
+  </section>
 
   <section id="hud">
     <div class="hud-title">FPV Drone</div>
@@ -59,7 +95,8 @@
       <span class="speed-tier-label">Teleport</span>
       <button id="teleport-ucd" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">UC Davis</button>
       <button id="teleport-beu" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">BEU</button>
-      <button id="teleport-airline" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">Airline Fire</button>
+      <button id="teleport-airline" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">Airline
+        Fire</button>
     </div>
     <div id="cloud-toggle-bar"
       style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
@@ -71,6 +108,32 @@
       <span class="speed-tier-label">400ft Grid</span>
       <button id="agl-ceiling-btn" class="speed-btn active" type="button" style="padding: 0.32rem 0.5rem;">ON</button>
     </div>
+    <div id="playground-bar"
+      style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem;">
+      <span class="speed-tier-label">Playground</span>
+      <button id="playground-none" class="speed-btn active" type="button" style="padding: 0.32rem 0.5rem;">Real
+        World</button>
+      <button id="playground-slalom" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">Slalom</button>
+      <button id="playground-ring" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">Ring</button>
+      <button id="playground-maze" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">Maze</button>
+    </div>
+    <div id="mission-bar"
+      style="display: flex; align-items: center; gap: 0.35rem; margin-top: 0.4rem; margin-bottom: 0.35rem; flex-wrap: wrap;">
+      <span class="speed-tier-label">Missions</span>
+      <button id="mission-forest" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">B1</button>
+      <button id="mission-canyon" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">B2</button>
+      <button id="mission-firefighter" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">B3</button>
+      <button id="mission-multistop" class="speed-btn" type="button" style="padding: 0.32rem 0.5rem;">B4</button>
+    </div>
+    <div id="metrics-bar" style="margin-top: 0.4rem; font-size: 0.85rem; color: #aaa;">
+      <span id="metrics-display">Collisions: 0 | Waypoints: 0/0 | Score: -</span>
+    </div>
+    <div id="collision-toggle" style="margin-top: 0.3rem; font-size: 0.8rem; color: #aaa;">
+      <label style="cursor: pointer; user-select: none;">
+        <input id="collision-box-toggle" type="checkbox" style="margin-right: 0.35rem;" />
+        Show drone collision box
+      </label>
+    </div>
     <div class="controls">
       <div class="controls-title">Controls</div>
       <p><code>W</code> ascend | <code>S</code> descend</p>
@@ -80,14 +143,44 @@
     </div>
   </section>
 
-  <!-- Incident Overlay Legend (bottom-right, expandable) -->
-  <section id="incident-panel">
-    <div id="incident-header">
-      <span>Incident Overlay</span>
-      <span id="incident-arrow">&#x25BE;</span>
+  <div id="benchmark-results-dialog" class="modal-dialog">
+    <div class="modal-content">
+      <h2 id="benchmark-results-title">Benchmark Results</h2>
+      <div id="benchmark-metrics-content"></div>
+      <button id="benchmark-close-btn" class="close-btn">Dismiss</button>
     </div>
-    <div id="incident-body"></div>
-  </section>
+  </div>
+
+  <div id="batch-results-dialog" class="modal-dialog">
+    <div class="modal-content" style="width: min(900px, 95vw);">
+      <h2>Batch Benchmark Summary</h2>
+      <div style="overflow-x: auto; margin: 1.5rem 0;">
+        <table id="batch-results-table" class="results-table">
+          <thead>
+            <tr>
+              <th>Trial</th>
+              <th>Requirement</th>
+              <th>Success</th>
+              <th>Actual Time</th>
+              <th>Reason</th>
+              <th>Distance</th>
+              <th>Collisions</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Dynamic rows -->
+          </tbody>
+        </table>
+      </div>
+      <div style="display: flex; gap: 1rem;">
+        <button id="export-xlsx-btn" class="run-btn" style="background: #107c41;">Export to Excel (.xlsx)</button>
+        <button id="batch-close-btn" class="close-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mission-toast" class="mission-toast">Team 1 Reached</div>
 
 </body>
 

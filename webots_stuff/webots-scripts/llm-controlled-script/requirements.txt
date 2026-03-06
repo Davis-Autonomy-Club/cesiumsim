@@ -1,0 +1,6 @@
+opencv-python
+numpy
+python-dotenv
+pymavlink
+openai
+google-genai

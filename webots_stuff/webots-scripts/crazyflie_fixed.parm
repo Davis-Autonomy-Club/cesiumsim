@@ -1,0 +1,29 @@
+FRAME_CLASS      1          # Multirotor
+FRAME_TYPE       3          # H class
+
+ATC_ANG_PIT_P    0.5
+ATC_ANG_RLL_P    0.5
+ATC_ANG_YAW_P    0.50000
+
+ATC_RAT_PIT_P    0.05
+ATC_RAT_RLL_P    0.05
+ATC_RAT_YAW_P    0.02 
+
+# FIX: These must be > 0
+ATC_RAT_PIT_I    0.05
+ATC_RAT_RLL_I    0.05
+ATC_RAT_YAW_I    0.01
+
+ATC_RAT_PIT_D    0.0003
+ATC_RAT_RLL_D    0.0003  
+ATC_RAT_YAW_D    0.000001
+
+AHRS_EKF_TYPE    10         # Use sim AHRS
+MOT_THST_EXPO    0          # No motor exponential
+INS_GYR_CAL      0
+
+# CRITICAL FIXES:
+ARMING_CHECK     0          # Skip ALL arming checks (disables accel check too)
+SCHED_LOOP_RATE  300        # Lower loop rate
+ACRO_BAL_ROLL    0          # Disable ACRO balance
+ACRO_BAL_PITCH   0          # Disable ACRO balance
