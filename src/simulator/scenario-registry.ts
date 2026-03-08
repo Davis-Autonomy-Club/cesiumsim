@@ -1,12 +1,13 @@
-import { START_LOCATION, UCD_LOCATION } from "./config";
+import {
+  AIRLINE_FIRE_LOCATION,
+  BEU_FIRE_PERIMETER_LOCATION,
+  START_LOCATION,
+  UCD_LOCATION,
+  type ScenarioLocation,
+} from "./scenario-locations";
+export type { ScenarioLocation } from "./scenario-locations";
 
 export type ScenarioKind = "course" | "mission";
-
-export interface ScenarioLocation {
-  longitude: number;
-  latitude: number;
-  height: number;
-}
 
 export interface ScenarioMetadata {
   id: string;
@@ -28,20 +29,6 @@ export interface MissionScenario extends ScenarioMetadata {
 }
 
 export type ScenarioDefinition = CourseScenario | MissionScenario;
-
-// Ported from the legacy root runtime so the canonical registry lives in src/**.
-const BEU_FIRE_PERIMETER_LOCATION: ScenarioLocation = {
-  longitude: -121.419,
-  latitude: 36.1456,
-  height: 0,
-};
-
-// Ported from the legacy incident overlay module.
-const AIRLINE_FIRE_LOCATION: ScenarioLocation = {
-  longitude: -121.20523,
-  latitude: 36.67424,
-  height: 393.2,
-};
 
 export const COURSE_SCENARIOS: CourseScenario[] = [
   {

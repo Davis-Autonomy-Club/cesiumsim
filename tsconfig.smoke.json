@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./.benchmark-smoke",
+    "allowImportingTsExtensions": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": "./src"
+  },
+  "include": [
+    "src/evaluation/**/*.ts",
+    "src/simulator/autopilot.ts",
+    "src/simulator/playgrounds/types.ts",
+    "src/simulator/scenario-locations.ts",
+    "src/simulator/scenario-registry.ts"
+  ]
+}

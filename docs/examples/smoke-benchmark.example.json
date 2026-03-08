@@ -1,0 +1,291 @@
+{
+  "suiteId": "autopilot-course-smoke",
+  "deterministic": true,
+  "pilotType": "autopilot",
+  "stepSeconds": 0.1,
+  "seed": 0,
+  "summary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0
+  },
+  "results": [
+    {
+      "routeId": "downtown-zigzag",
+      "scenarioId": "course-downtown-san-francisco",
+      "scenarioName": "Downtown San Francisco",
+      "thresholds": {
+        "requireCompletion": true,
+        "allowTimeout": false,
+        "maxCollisions": 0,
+        "maxElapsedTimeSeconds": 42
+      },
+      "checks": [
+        {
+          "name": "completion",
+          "passed": true,
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "timeout",
+          "passed": true,
+          "expected": true,
+          "actual": false
+        },
+        {
+          "name": "collisions",
+          "passed": true,
+          "expected": 0,
+          "actual": 0
+        }
+      ],
+      "pass": true,
+      "stepsExecuted": 122,
+      "evaluation": {
+        "episode": {
+          "source": "course-benchmark",
+          "episodeId": "smoke-course-downtown-san-francisco",
+          "runId": "autopilot-course-smoke",
+          "pilotType": "autopilot",
+          "startedAtSeconds": 0
+        },
+        "scenarioId": "course-downtown-san-francisco",
+        "seed": 0,
+        "completionStatus": "completed",
+        "endReason": "success",
+        "collisions": {
+          "count": 0,
+          "hadAny": false
+        },
+        "elapsedTimeSeconds": 12.2,
+        "pathMetrics": {
+          "pathDistanceMeters": 225.325,
+          "straightLineDistanceMeters": 210.623,
+          "efficiencyRatio": 0.935,
+          "distanceToTargetMeters": null,
+          "waypointsReached": 4,
+          "totalWaypoints": 4,
+          "completionRatio": 1
+        },
+        "score": 0.987,
+        "scenarioSpecificMetrics": {
+          "legacySuccess": true,
+          "waypointIdsReached": [
+            "wp-1",
+            "wp-2",
+            "wp-3",
+            "wp-4"
+          ]
+        }
+      }
+    },
+    {
+      "routeId": "campus-arc",
+      "scenarioId": "course-uc-davis",
+      "scenarioName": "UC Davis",
+      "thresholds": {
+        "requireCompletion": true,
+        "allowTimeout": false,
+        "maxCollisions": 0,
+        "maxElapsedTimeSeconds": 44
+      },
+      "checks": [
+        {
+          "name": "completion",
+          "passed": true,
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "timeout",
+          "passed": true,
+          "expected": true,
+          "actual": false
+        },
+        {
+          "name": "collisions",
+          "passed": true,
+          "expected": 0,
+          "actual": 0
+        }
+      ],
+      "pass": true,
+      "stepsExecuted": 110,
+      "evaluation": {
+        "episode": {
+          "source": "course-benchmark",
+          "episodeId": "smoke-course-uc-davis",
+          "runId": "autopilot-course-smoke",
+          "pilotType": "autopilot",
+          "startedAtSeconds": 0
+        },
+        "scenarioId": "course-uc-davis",
+        "seed": 0,
+        "completionStatus": "completed",
+        "endReason": "success",
+        "collisions": {
+          "count": 0,
+          "hadAny": false
+        },
+        "elapsedTimeSeconds": 11,
+        "pathMetrics": {
+          "pathDistanceMeters": 202.119,
+          "straightLineDistanceMeters": 193.186,
+          "efficiencyRatio": 0.956,
+          "distanceToTargetMeters": null,
+          "waypointsReached": 3,
+          "totalWaypoints": 3,
+          "completionRatio": 1
+        },
+        "score": 0.991,
+        "scenarioSpecificMetrics": {
+          "legacySuccess": true,
+          "waypointIdsReached": [
+            "wp-1",
+            "wp-2",
+            "wp-3"
+          ]
+        }
+      }
+    },
+    {
+      "routeId": "perimeter-sweep",
+      "scenarioId": "course-beu-fire-perimeter",
+      "scenarioName": "BEU Fire Perimeter",
+      "thresholds": {
+        "requireCompletion": true,
+        "allowTimeout": false,
+        "maxCollisions": 0,
+        "maxElapsedTimeSeconds": 48
+      },
+      "checks": [
+        {
+          "name": "completion",
+          "passed": true,
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "timeout",
+          "passed": true,
+          "expected": true,
+          "actual": false
+        },
+        {
+          "name": "collisions",
+          "passed": true,
+          "expected": 0,
+          "actual": 0
+        }
+      ],
+      "pass": true,
+      "stepsExecuted": 140,
+      "evaluation": {
+        "episode": {
+          "source": "course-benchmark",
+          "episodeId": "smoke-course-beu-fire-perimeter",
+          "runId": "autopilot-course-smoke",
+          "pilotType": "autopilot",
+          "startedAtSeconds": 0
+        },
+        "scenarioId": "course-beu-fire-perimeter",
+        "seed": 0,
+        "completionStatus": "completed",
+        "endReason": "success",
+        "collisions": {
+          "count": 0,
+          "hadAny": false
+        },
+        "elapsedTimeSeconds": 14,
+        "pathMetrics": {
+          "pathDistanceMeters": 257.592,
+          "straightLineDistanceMeters": 233.937,
+          "efficiencyRatio": 0.908,
+          "distanceToTargetMeters": null,
+          "waypointsReached": 3,
+          "totalWaypoints": 3,
+          "completionRatio": 1
+        },
+        "score": 0.982,
+        "scenarioSpecificMetrics": {
+          "legacySuccess": true,
+          "waypointIdsReached": [
+            "wp-1",
+            "wp-2",
+            "wp-3"
+          ]
+        }
+      }
+    },
+    {
+      "routeId": "incident-zigzag",
+      "scenarioId": "course-airline-fire",
+      "scenarioName": "Airline Fire",
+      "thresholds": {
+        "requireCompletion": true,
+        "allowTimeout": false,
+        "maxCollisions": 0,
+        "maxElapsedTimeSeconds": 44
+      },
+      "checks": [
+        {
+          "name": "completion",
+          "passed": true,
+          "expected": true,
+          "actual": true
+        },
+        {
+          "name": "timeout",
+          "passed": true,
+          "expected": true,
+          "actual": false
+        },
+        {
+          "name": "collisions",
+          "passed": true,
+          "expected": 0,
+          "actual": 0
+        }
+      ],
+      "pass": true,
+      "stepsExecuted": 105,
+      "evaluation": {
+        "episode": {
+          "source": "course-benchmark",
+          "episodeId": "smoke-course-airline-fire",
+          "runId": "autopilot-course-smoke",
+          "pilotType": "autopilot",
+          "startedAtSeconds": 0
+        },
+        "scenarioId": "course-airline-fire",
+        "seed": 0,
+        "completionStatus": "completed",
+        "endReason": "success",
+        "collisions": {
+          "count": 0,
+          "hadAny": false
+        },
+        "elapsedTimeSeconds": 10.5,
+        "pathMetrics": {
+          "pathDistanceMeters": 193.913,
+          "straightLineDistanceMeters": 178.963,
+          "efficiencyRatio": 0.923,
+          "distanceToTargetMeters": null,
+          "waypointsReached": 3,
+          "totalWaypoints": 3,
+          "completionRatio": 1
+        },
+        "score": 0.985,
+        "scenarioSpecificMetrics": {
+          "legacySuccess": true,
+          "waypointIdsReached": [
+            "wp-1",
+            "wp-2",
+            "wp-3"
+          ]
+        }
+      }
+    }
+  ]
+}

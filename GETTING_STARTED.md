@@ -56,6 +56,16 @@ Then open QGroundControl. The bridge exposes:
 
 The bridge is optional. It does not replace `npm run dev` as the way to start the project.
 
+## Smoke Benchmark
+
+Run the non-UI autopilot smoke suite with:
+
+```bash
+npm run benchmark:smoke
+```
+
+The command runs fixed deterministic course episodes and prints JSON results to stdout. It is intended as a quick regression check for completion, timeout, and collision behavior.
+
 ## Troubleshooting
 
 - If the app loads but Cesium assets fail, verify `VITE_CESIUM_TOKEN` is present in `.env`.

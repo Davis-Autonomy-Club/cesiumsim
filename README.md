@@ -42,6 +42,18 @@ The bridge listens on `ws://localhost:8089` and forwards MAVLink to `udpout:127.
 
 Canonical runtime structure is documented in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
 
+## Smoke Benchmark
+
+Run the headless autopilot smoke suite with:
+
+```bash
+npm run benchmark:smoke
+```
+
+The command emits deterministic JSON for fixed non-UI course episodes built from the current course scenario registry, and checks completion, timeout, and collision regressions.
+
+Collision tracking currently covers simulated ground-contact only, because the current course scenarios do not define headless obstacle geometry.
+
 ## Contributing
 
 New runtime code must live under `src/**`. Root JavaScript runtime files are legacy/reference-only. See [CONTRIBUTING.md](./CONTRIBUTING.md) for contributor rules.
