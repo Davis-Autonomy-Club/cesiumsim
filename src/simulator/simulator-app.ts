@@ -14,8 +14,6 @@ import {
   FPV_PITCH_DOWN,
   KEY_BLOCKLIST,
   SPEED_TIERS,
-  START_LOCATION,
-  UCD_LOCATION,
 } from "./config";
 import { GeminiController } from "./gemini-controller";
 import {
@@ -25,9 +23,16 @@ import {
   setFlightStatus,
   updateSpeedTierHud,
 } from "./hud";
+import {
+  DEFAULT_SIMULATOR_SCENARIO_ID,
+  type ScenarioLocation,
+  SIMULATOR_TELEPORT_BUTTON_SCENARIOS,
+  getCourseScenario,
+} from "./scenario-registry";
 
 export function startSimulator(): void {
   const HUD = getHudElements();
+  const defaultScenario = getCourseScenario(DEFAULT_SIMULATOR_SCENARIO_ID);
 
   if (!window.Cesium) {
     HUD.datasetStatus.textContent = "Cesium failed to load. Refresh and try again.";
@@ -52,9 +57,9 @@ export function startSimulator(): void {
 
   const drone = {
     position: Cesium.Cartesian3.fromDegrees(
-      START_LOCATION.longitude,
-      START_LOCATION.latitude,
-      START_LOCATION.height,
+      defaultScenario.location.longitude,
+      defaultScenario.location.latitude,
+      defaultScenario.location.height,
     ),
     horizontalVelocity: new Cesium.Cartesian3(0.0, 0.0, 0.0),
     verticalSpeed: 0.0,
@@ -597,10 +602,10 @@ export function startSimulator(): void {
   }
 
   function resetPosition() {
-    teleportTo(START_LOCATION);
+    teleportTo(defaultScenario.location);
   }
 
-  function teleportTo(location) {
+  function teleportTo(location: ScenarioLocation) {
     drone.position = Cesium.Cartesian3.fromDegrees(
       location.longitude,
       location.latitude,
@@ -615,6 +620,14 @@ export function startSimulator(): void {
     updateHorizontalAxes();
     updateWorldAxes();
     updateCamera();
+  }
+
+  function loadCourseScenario(scenarioId: string) {
+    const scenario = getCourseScenario(scenarioId);
+    teleportTo(scenario.location);
+    if (scenario.statusText) {
+      setFlightStatus(HUD, scenario.statusText, false);
+    }
   }
 
   const geminiController = new GeminiController({
@@ -666,14 +679,17 @@ export function startSimulator(): void {
     });
     updateSpeedTierHud(speedTierIndex, speedMultiplier, SPEED_TIERS);
 
-    const ucdBtn = document.getElementById("teleport-ucd");
-    if (ucdBtn) {
-      ucdBtn.addEventListener("click", () => {
-        teleportTo(UCD_LOCATION);
-        // Remove focus from button so keyboard controls work immediately
-        ucdBtn.blur();
+    SIMULATOR_TELEPORT_BUTTON_SCENARIOS.forEach(({ buttonId, scenarioId }) => {
+      const button = document.getElementById(buttonId);
+      if (!button) {
+        return;
+      }
+
+      button.addEventListener("click", () => {
+        loadCourseScenario(scenarioId);
+        button.blur();
       });
-    }
+    });
   }
 
   // ── RL Continuous Action API ──
