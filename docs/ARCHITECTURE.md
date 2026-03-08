@@ -23,7 +23,7 @@ It is an architectural contract for future work. It does not change the live sim
 - Reserved canonical namespace for future evaluation workflows.
 - Intended for scoring, replay analysis, measurement, and other non-gym evaluation runtimes.
 - New evaluation code should be created here when that work begins.
-- Shared benchmark result types and compatibility adapters live here.
+- Shared benchmark result types, lifecycle core, and compatibility adapters live here.
 
 ### `src/gym/**`
 

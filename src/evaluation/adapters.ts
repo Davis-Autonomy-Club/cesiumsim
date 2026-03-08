@@ -4,6 +4,11 @@ import type {
   EvaluationPathMetrics,
   UnifiedEvaluationResult,
 } from "./types";
+import {
+  createEvaluationLifecycle,
+  type EvaluationLifecycleController,
+  type EvaluationLifecycleTickResult,
+} from "./core";
 
 export type LegacyCourseBenchmarkReason =
   | "success"
@@ -49,6 +54,9 @@ export interface CourseEvaluationAdapterInput {
   runId?: string;
   pilotType?: string;
   totalWaypoints?: number | null;
+  completionStatus?: EvaluationCompletionStatus;
+  endReason?: EvaluationEndReason;
+  collisionCount?: number;
 }
 
 export interface MissionEvaluationAdapterInput {
@@ -59,6 +67,7 @@ export interface MissionEvaluationAdapterInput {
   runId?: string;
   pilotType?: string;
   startedAtSeconds?: number | null;
+  completionStatus?: EvaluationCompletionStatus;
   collisions?: number;
   score?: number | null;
   endReason?: EvaluationEndReason;
@@ -78,6 +87,51 @@ export interface MissionScenarioSpecificMetrics {
   holdProgress: number;
   timeRemainingSeconds: number;
 }
+
+export interface CourseEvaluationLifecycleCallbacks {
+  getElapsedTime: () => number;
+  getMetrics: () => LegacyCourseMetricsLike;
+  isComplete: () => boolean;
+}
+
+export interface CourseEvaluationLifecycleOptions {
+  scenarioId: string;
+  maxDurationSeconds: number;
+  seed?: number | string | null;
+  episodeId?: string;
+  runId?: string;
+  pilotType?: string;
+  totalWaypoints?: number | null;
+}
+
+export interface MissionEvaluationLifecycleCallbacks {
+  getStatus: () => MissionStatusLike;
+  getCollisions?: () => number;
+  getScore?: () => number | null;
+  getPathMetrics?: () => Partial<EvaluationPathMetrics>;
+}
+
+export interface MissionEvaluationLifecycleOptions {
+  scenarioId?: string;
+  maxDurationSeconds?: number | null;
+  seed?: number | string | null;
+  episodeId?: string;
+  runId?: string;
+  pilotType?: string;
+  startedAtSeconds?: number | null;
+}
+
+type CourseLifecycleSnapshot = {
+  elapsedTimeSeconds: number;
+  result: LegacyCourseBenchmarkResultLike;
+};
+
+type MissionLifecycleSnapshot = {
+  status: MissionStatusLike;
+  collisions: number;
+  score: number | null;
+  pathMetrics?: Partial<EvaluationPathMetrics>;
+};
 
 export function adaptCourseBenchmarkResult(
   input: CourseEvaluationAdapterInput,
@@ -105,11 +159,12 @@ export function adaptCourseBenchmarkResult(
     },
     scenarioId: input.scenarioId,
     seed: input.seed ?? null,
-    completionStatus: getCourseCompletionStatus(result),
-    endReason: result.reason,
+    completionStatus:
+      input.completionStatus ?? getCourseCompletionStatus(result),
+    endReason: input.endReason ?? result.reason,
     collisions: {
-      count: result.metrics.collisionCount,
-      hadAny: result.metrics.collisionCount > 0,
+      count: input.collisionCount ?? result.metrics.collisionCount,
+      hadAny: (input.collisionCount ?? result.metrics.collisionCount) > 0,
     },
     elapsedTimeSeconds: result.metrics.elapsedTime,
     pathMetrics: {
@@ -159,7 +214,8 @@ export function adaptMissionBenchmarkResult(
     },
     scenarioId,
     seed: input.seed ?? null,
-    completionStatus: getMissionCompletionStatus(status.state),
+    completionStatus:
+      input.completionStatus ?? getMissionCompletionStatus(status.state),
     endReason: input.endReason ?? getMissionEndReason(status),
     collisions: {
       count: input.collisions ?? 0,
@@ -179,6 +235,111 @@ export function adaptMissionBenchmarkResult(
       holdProgress: status.holdProgress,
       timeRemainingSeconds: status.timeRemaining,
     },
+  };
+}
+
+export function createCourseEvaluationLifecycle(
+  callbacks: CourseEvaluationLifecycleCallbacks,
+  options: CourseEvaluationLifecycleOptions,
+): {
+  controller: EvaluationLifecycleController<
+    CourseLifecycleSnapshot,
+    UnifiedEvaluationResult<CourseScenarioSpecificMetrics>
+  >;
+  tick: () => EvaluationLifecycleTickResult<
+    UnifiedEvaluationResult<CourseScenarioSpecificMetrics>
+  >;
+} {
+  const controller = createEvaluationLifecycle<
+    CourseLifecycleSnapshot,
+    UnifiedEvaluationResult<CourseScenarioSpecificMetrics>
+  >({
+    maxDurationSeconds: options.maxDurationSeconds,
+    getElapsedTimeSeconds: (snapshot) => snapshot.elapsedTimeSeconds,
+    getCompletionStatus: (snapshot) =>
+      snapshot.result.completed ? "completed" : "in_progress",
+    getCollisionCount: (snapshot) => snapshot.result.metrics.collisionCount,
+    buildResult: ({ snapshot, completionStatus, endReason, collisionCount }) =>
+      adaptCourseBenchmarkResult({
+        scenarioId: options.scenarioId,
+        seed: options.seed,
+        episodeId: options.episodeId,
+        runId: options.runId,
+        pilotType: options.pilotType,
+        totalWaypoints: options.totalWaypoints,
+        result: snapshot.result,
+        completionStatus,
+        endReason,
+        collisionCount,
+      }),
+  });
+
+  return {
+    controller,
+    tick: () => {
+      const metrics = callbacks.getMetrics();
+      const completed = callbacks.isComplete();
+
+      return controller.tick({
+        elapsedTimeSeconds: callbacks.getElapsedTime(),
+        result: {
+          metrics,
+          completed,
+          reason: completed ? "success" : "manual_stop",
+        },
+      });
+    },
+  };
+}
+
+export function createMissionEvaluationLifecycle(
+  callbacks: MissionEvaluationLifecycleCallbacks,
+  options: MissionEvaluationLifecycleOptions,
+): {
+  controller: EvaluationLifecycleController<
+    MissionLifecycleSnapshot,
+    UnifiedEvaluationResult<MissionScenarioSpecificMetrics>
+  >;
+  tick: () => EvaluationLifecycleTickResult<
+    UnifiedEvaluationResult<MissionScenarioSpecificMetrics>
+  >;
+} {
+  const controller = createEvaluationLifecycle<
+    MissionLifecycleSnapshot,
+    UnifiedEvaluationResult<MissionScenarioSpecificMetrics>
+  >({
+    maxDurationSeconds: options.maxDurationSeconds,
+    getElapsedTimeSeconds: (snapshot) => snapshot.status.elapsedTime,
+    getCompletionStatus: (snapshot) =>
+      getMissionCompletionStatus(snapshot.status.state),
+    getCollisionCount: (snapshot) => snapshot.collisions,
+    getEndReason: (snapshot) => getMissionEndReason(snapshot.status),
+    buildResult: ({ snapshot, completionStatus, endReason, collisionCount }) =>
+      adaptMissionBenchmarkResult({
+        scenarioId: options.scenarioId,
+        seed: options.seed,
+        episodeId: options.episodeId,
+        runId: options.runId,
+        pilotType: options.pilotType,
+        startedAtSeconds: options.startedAtSeconds,
+        status: snapshot.status,
+        completionStatus,
+        endReason,
+        collisions: collisionCount,
+        score: snapshot.score,
+        pathMetrics: snapshot.pathMetrics,
+      }),
+  });
+
+  return {
+    controller,
+    tick: () =>
+      controller.tick({
+        status: callbacks.getStatus(),
+        collisions: callbacks.getCollisions?.() ?? 0,
+        score: callbacks.getScore?.() ?? null,
+        pathMetrics: callbacks.getPathMetrics?.(),
+      }),
   };
 }
 
