@@ -24,3 +24,6 @@
 
 - Run `npm run lint`.
 - Run `npm run typecheck`.
+- Run `npm run build`.
+- Run `npm run benchmark:smoke` when that script exists.
+- GitHub Actions runs the same validation flow with `npm ci` on pushes and pull requests.
