@@ -56,6 +56,12 @@ Rules for this legacy surface:
 - Existing `src/**` folders outside the canonical module list may remain during migration.
 - Those existing files do not change the canonical top-level module layout declared above.
 
+## Playground Terrain
+
+- Playground terrain support under `src/simulator/playgrounds/**` is intentionally limited to `flat` and `ellipsoid`.
+- `flat` and `ellipsoid` currently both use Cesium's no-relief ellipsoid terrain provider.
+- `procedural-hills` is not implemented and is rejected at runtime instead of silently falling back.
+
 ## Contributor Contract
 
 - New runtime code must live under `src/**`.
