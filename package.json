@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "benchmark:smoke": "rm -rf .benchmark-smoke && mkdir -p .benchmark-smoke && printf '{\"type\":\"commonjs\"}\n' > .benchmark-smoke/package.json && tsc -p tsconfig.smoke.json && node .benchmark-smoke/evaluation/smoke-benchmark.js",
-    "benchmark:smoke": "rm -rf .benchmark-smoke && mkdir -p .benchmark-smoke && printf '{\"type\":\"commonjs\"}\n' > .benchmark-smoke/package.json && tsc -p tsconfig.smoke.json && node .benchmark-smoke/evaluation/smoke-benchmark.js",
     "dev:security": "vite --open /security-dashboard.html",
     "wyze:up": "docker compose -f security/wyze-bridge/docker-compose.yml up -d",
     "wyze:logs": "docker compose -f security/wyze-bridge/docker-compose.yml logs -f --tail=120",
