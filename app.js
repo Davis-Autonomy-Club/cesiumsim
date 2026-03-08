@@ -32,7 +32,7 @@ import {
 (function main() {
   // ### Cesium access token and map locations
   const DEFAULT_CESIUM_TOKEN =
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJjMmFjOWQwNy1lYTA5LTRmZWUtODNkOS1jYTAyNWM0OGVkMmMiLCJpZCI6Mzc3Mzg3LCJpYXQiOjE3NjgxNzAyNDN9.rAi0BHXk9BUPEfYxockPHQxu9qvCJ8ifJS0duz7HUl0";
+    import.meta.env.VITE_CESIUM_TOKEN ?? "";
 
 
   const START_LOCATION = {
