@@ -38,6 +38,14 @@ The browser app still starts with `npm run dev`. If you also want MAVLink output
 
 The bridge listens on `ws://localhost:8089` and forwards MAVLink to `udpout:127.0.0.1:14550`.
 
+## Architecture
+
+Canonical runtime structure is documented in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+
+## Contributing
+
+New runtime code must live under `src/**`. Root JavaScript runtime files are legacy/reference-only. See [CONTRIBUTING.md](./CONTRIBUTING.md) for contributor rules.
+
 ## More Detail
 
 See [GETTING_STARTED.md](./GETTING_STARTED.md) for the full setup sequence and troubleshooting notes.
