@@ -35,7 +35,8 @@ body {
 }
 
 #hud,
-#status-panel {
+#status-panel,
+#api-test-panel {
   position: fixed;
   z-index: 10;
   backdrop-filter: blur(10px);
@@ -49,6 +50,13 @@ body {
   left: 1rem;
   min-width: 19rem;
   padding: 0.9rem 1rem 1rem;
+}
+
+#api-test-panel {
+  top: 14.7rem;
+  left: 1rem;
+  width: min(19rem, calc(100vw - 2rem));
+  padding: 0.75rem 0.8rem 0.8rem;
 }
 
 .hud-title {
@@ -86,6 +94,13 @@ body {
   margin: 0.45rem 0;
   font-size: 0.93rem;
   line-height: 1.25;
+}
+
+#api-test-panel p {
+  margin: 0.25rem 0 0.4rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: "Space Mono", monospace;
 }
 
 #status-panel code {
@@ -142,6 +157,65 @@ body {
   font-family: "Space Mono", monospace;
   font-size: 0.8rem;
   text-transform: uppercase;
+}
+
+.api-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.api-input {
+  min-width: 0;
+  border: 1px solid rgba(130, 227, 255, 0.3);
+  background: rgba(130, 227, 255, 0.08);
+  color: var(--text-main);
+  font-family: "Space Mono", monospace;
+  font-size: 0.7rem;
+  padding: 0.26rem 0.35rem;
+}
+
+#api-action-select {
+  flex: 1;
+}
+
+#api-magnitude-input {
+  width: 3.2rem;
+}
+
+#api-frame-fps {
+  width: 2.7rem;
+}
+
+#api-state-output {
+  margin: 0.35rem 0 0.35rem;
+  max-height: 4.5rem;
+  overflow: auto;
+  border: 1px solid rgba(130, 227, 255, 0.2);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text-main);
+  font-family: "Space Mono", monospace;
+  font-size: 0.66rem;
+  line-height: 1.25;
+  padding: 0.35rem;
+  white-space: pre-wrap;
+}
+
+#api-frame-meta {
+  font-family: "Space Mono", monospace;
+  font-size: 0.67rem;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+#api-frame-preview {
+  width: 100%;
+  display: block;
+  border: 1px solid rgba(130, 227, 255, 0.2);
+  background: rgba(0, 0, 0, 0.3);
+  min-height: 68px;
+  object-fit: cover;
 }
 
 
@@ -214,6 +288,14 @@ body {
     min-width: auto;
     width: calc(100vw - 1rem);
     padding: 0.7rem 0.78rem;
+  }
+
+  #api-test-panel {
+    top: auto;
+    left: 0.5rem;
+    right: 0.5rem;
+    width: auto;
+    bottom: 0.5rem;
   }
 
   #status-panel {

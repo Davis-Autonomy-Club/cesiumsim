@@ -1,50 +1,57 @@
-# Cesium FPV Drone Simulator (v1)
+# DAC CesiumSim for Hackers
 
-High-fidelity first-person drone simulator built with CesiumJS and optional Google Photorealistic 3D Tiles.
+This repo is the hackathon starter simulator for building VLM/VLA-controlled drone behavior.
+Treat it as **Stage 0**: stable base simulator + external API bridge + action-token interface for your agent loop.
 
-## 📖 Documentation
+## Start Here
 
-For a comprehensive guide on how to install, configure, and understand the codebase, please see:
+- Quick setup and API usage: [`HACKATHON.md`](./HACKATHON.md)
+- Full architecture + action-token concepts: [`HACKER_GUIDE.md`](./HACKER_GUIDE.md)
 
-👉 **[GETTING_STARTED.md](./GETTING_STARTED.md)**
+If you only read one file before coding, read `HACKER_GUIDE.md`.
 
-## Quick Run
+## Quick Launch
 
+1. `npm run dev`
+2. `python api-bridge.py`
+3. Open the local Vite URL shown in terminal (usually `http://localhost:4173`)
 
-From `/Users/nilsfleig/Projects/cesiumsim`:
+## What You Build
 
-```bash
-python3 -m http.server 4173
-```
+Your controller (Python or otherwise) should:
 
-Then open:
+1. read frames from `GET /frames` (SSE),
+2. optionally read telemetry from `GET /state`,
+3. choose an action token,
+4. send it with `POST /action`.
 
-- `http://localhost:4173`
+Supported action tokens:
 
-Optional (override Google key):
+- `forward`
+- `backward`
+- `left`
+- `right`
+- `ascend`
+- `descend`
+- `rotate_cw`
+- `rotate_ccw`
 
-- `http://localhost:4173/?googleApiKey=YOUR_GOOGLE_MAPS_API_KEY`
+`magnitude` controls duration from `0.0` to `1.0`.
 
-## Cesium token
+## In-Sim Controls (manual debug)
 
-`app.js` includes your provided Cesium default access token so the simulator boots without extra setup.
+- `W` / `S`: ascend / descend
+- `Arrow Up` / `Arrow Down`: forward / backward
+- `A` / `D`: strafe left / right
+- `Arrow Left` / `Arrow Right`: yaw
+- `C`: toggle FPV camera
+- `R`: reset spawn
 
-You can override at runtime:
+## Hackathon Intent
 
-- `http://localhost:4173/?cesiumToken=YOUR_TOKEN`
+This codebase is intentionally designed to be extended by teams:
 
-## Controls
-
-- `W A S D`: translate in local drone axes
-- `Space`: rise
-- `Shift`: descend
-- `Mouse`: look/yaw-pitch
-- `Arrow keys`: fine yaw/pitch trim
-- `Q / E`: roll
-- `Ctrl`: boost
-- `R`: reset to spawn location
-
-## Notes
-
-- Google Photorealistic 3D Tiles use the hardcoded API key in `app.js`; URL/localStorage values can still override it.
-- The app falls back to Cesium + OSM data automatically if Google tiles are unavailable.
+- plug in your VLM/VLA policy,
+- add smarter token selection and planning,
+- improve mission logic and evaluation,
+- iterate quickly without rewriting simulator internals.

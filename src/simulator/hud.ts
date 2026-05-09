@@ -2,9 +2,9 @@ export type HudElements = {
   speed: HTMLElement;
   altitudeAgl: HTMLElement;
   altitudeMsl: HTMLElement;
-  heading: HTMLElement;
-  attitude: HTMLElement;
-  position: HTMLElement;
+  heading: HTMLElement | null;
+  attitude: HTMLElement | null;
+  position: HTMLElement | null;
   datasetStatus: HTMLElement;
   flightStatus: HTMLElement;
 };
@@ -28,9 +28,9 @@ export function getHudElements(): HudElements {
     speed: getRequiredElement("hud-speed"),
     altitudeAgl: getRequiredElement("hud-altitude-agl"),
     altitudeMsl: getRequiredElement("hud-altitude-msl"),
-    heading: getRequiredElement("hud-heading"),
-    attitude: getRequiredElement("hud-attitude"),
-    position: getRequiredElement("hud-position"),
+    heading: document.getElementById("hud-heading"),
+    attitude: document.getElementById("hud-attitude"),
+    position: document.getElementById("hud-position"),
     datasetStatus: getRequiredElement("dataset-status"),
     flightStatus: getRequiredElement("flight-status"),
   };

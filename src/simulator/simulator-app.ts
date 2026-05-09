@@ -18,6 +18,7 @@ import {
   UCD_LOCATION,
 } from "./config";
 import { FlightMetrics } from "./flight-metrics";
+import { initExternalAPI } from "./external-api";
 import {
   loadPlayground as loadPlaygroundAssets,
   unloadPlayground,
@@ -682,11 +683,17 @@ export function startSimulator(): void {
     HUD.speed.textContent = `${(speedMetersPerSecond * 3.6).toFixed(1)} km/h`;
     HUD.altitudeAgl.textContent = `${agl.toFixed(1)} m`;
     HUD.altitudeMsl.textContent = `${scratch.cartographic.height.toFixed(1)} m`;
-    HUD.heading.textContent = `${headingDeg.toFixed(1)} deg`;
-    HUD.attitude.textContent = `${pitchDeg.toFixed(1)} deg / ${rollDeg.toFixed(1)} deg`;
-    HUD.position.textContent =
-      `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
-      `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
+    if (HUD.heading) {
+      HUD.heading.textContent = `${headingDeg.toFixed(1)} deg`;
+    }
+    if (HUD.attitude) {
+      HUD.attitude.textContent = `${pitchDeg.toFixed(1)} deg / ${rollDeg.toFixed(1)} deg`;
+    }
+    if (HUD.position) {
+      HUD.position.textContent =
+        `${Cesium.Math.toDegrees(scratch.cartographic.latitude).toFixed(5)}, ` +
+        `${Cesium.Math.toDegrees(scratch.cartographic.longitude).toFixed(5)}`;
+    }
 
     const metricsEl = document.getElementById("metrics-display");
     if (metricsEl) {
@@ -758,6 +765,9 @@ export function startSimulator(): void {
   }
 
   function setupInputHandlers() {
+    const BRIDGE_HTTP_BASE = "http://localhost:8766";
+    let frameEventSource: EventSource | null = null;
+
     document.addEventListener("keydown", (event) => {
       keyState.add(event.code);
       if (KEY_BLOCKLIST.has(event.code)) {
@@ -799,6 +809,35 @@ export function startSimulator(): void {
       });
     }
 
+    const teleportInput = document.getElementById("teleport-input") as HTMLInputElement | null;
+    const teleportCustomBtn = document.getElementById("teleport-custom-btn");
+
+    function parseAndTeleport(raw: string) {
+      const parts = raw.split(",").map((segment) => segment.trim());
+      if (parts.length >= 2) {
+        const lat = parseFloat(parts[0]);
+        const lon = parseFloat(parts[1]);
+        const alt = parts[2] ? parseFloat(parts[2]) : 200;
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          teleportTo({ longitude: lon, latitude: lat, height: alt });
+          return;
+        }
+      }
+      console.warn("[teleport] Could not parse input:", raw);
+    }
+
+    if (teleportCustomBtn && teleportInput) {
+      teleportCustomBtn.addEventListener("click", () => {
+        parseAndTeleport(teleportInput.value);
+        teleportCustomBtn.blur();
+      });
+      teleportInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          parseAndTeleport(teleportInput.value);
+        }
+      });
+    }
+
     const playgroundBtns = [
       { id: "playground-none", playground: null },
       { id: "playground-slalom", playground: slalomPlayground },
@@ -835,6 +874,139 @@ export function startSimulator(): void {
         }
       });
     }
+
+    const bridgeStatus = document.getElementById("api-bridge-status");
+    const actionSelect = document.getElementById("api-action-select") as HTMLSelectElement | null;
+    const magnitudeInput = document.getElementById("api-magnitude-input") as HTMLInputElement | null;
+    const sendActionBtn = document.getElementById("api-send-action-btn");
+    const fetchStateBtn = document.getElementById("api-fetch-state-btn");
+    const stateOutput = document.getElementById("api-state-output");
+    const frameFpsInput = document.getElementById("api-frame-fps") as HTMLInputElement | null;
+    const startFramesBtn = document.getElementById("api-start-frames-btn");
+    const stopFramesBtn = document.getElementById("api-stop-frames-btn");
+    const frameMeta = document.getElementById("api-frame-meta");
+    const framePreview = document.getElementById("api-frame-preview") as HTMLImageElement | null;
+
+    function setBridgeStatus(message: string, isError = false) {
+      if (!bridgeStatus) return;
+      bridgeStatus.textContent = message;
+      bridgeStatus.style.color = isError ? "#ff9090" : "var(--text-muted)";
+    }
+
+    async function sendActionRequest() {
+      if (!actionSelect || !magnitudeInput) return;
+      const action = actionSelect.value;
+      const magnitude = Math.max(0, Math.min(1, Number(magnitudeInput.value)));
+      try {
+        const response = await fetch(`${BRIDGE_HTTP_BASE}/action`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, magnitude }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          setBridgeStatus(`Bridge error: ${payload.error ?? response.status}`, true);
+          return;
+        }
+        setBridgeStatus(`Action sent: ${action} (${magnitude.toFixed(2)})`);
+      } catch (error) {
+        setBridgeStatus(`Bridge request failed: ${String(error)}`, true);
+      }
+    }
+
+    async function fetchStateRequest() {
+      if (!stateOutput) return;
+      try {
+        const response = await fetch(`${BRIDGE_HTTP_BASE}/state`);
+        const payload = await response.json();
+        stateOutput.textContent = JSON.stringify(payload, null, 2);
+        if ((payload as { error?: string }).error) {
+          setBridgeStatus(`State error: ${(payload as { error: string }).error}`, true);
+        } else {
+          setBridgeStatus("State fetch OK");
+        }
+      } catch (error) {
+        stateOutput.textContent = String(error);
+        setBridgeStatus(`State request failed: ${String(error)}`, true);
+      }
+    }
+
+    function stopFrameStream() {
+      if (frameEventSource) {
+        frameEventSource.close();
+        frameEventSource = null;
+      }
+      if (frameMeta) {
+        frameMeta.textContent = "Frame stream idle.";
+      }
+      setBridgeStatus("Frame stream stopped");
+    }
+
+    function startFrameStream() {
+      const requestedFps = frameFpsInput ? Number(frameFpsInput.value) : 2;
+      const fps = Math.max(1, Math.min(10, Number.isFinite(requestedFps) ? requestedFps : 2));
+      if (frameFpsInput) {
+        frameFpsInput.value = String(Math.round(fps));
+      }
+
+      if (frameEventSource) {
+        frameEventSource.close();
+      }
+
+      frameEventSource = new EventSource(`${BRIDGE_HTTP_BASE}/frames?fps=${Math.round(fps)}`);
+      if (frameMeta) {
+        frameMeta.textContent = `Frame stream starting at ${Math.round(fps)} fps...`;
+      }
+
+      frameEventSource.onopen = () => {
+        setBridgeStatus(`Frame stream connected (${Math.round(fps)} fps)`);
+      };
+
+      frameEventSource.onmessage = (event) => {
+        if (framePreview) {
+          framePreview.src = `data:image/jpeg;base64,${event.data}`;
+        }
+        if (frameMeta) {
+          frameMeta.textContent = `Last frame: ${new Date().toLocaleTimeString()}`;
+        }
+      };
+
+      frameEventSource.onerror = () => {
+        setBridgeStatus("Frame stream error or bridge unavailable", true);
+        stopFrameStream();
+      };
+    }
+
+    if (sendActionBtn) {
+      sendActionBtn.addEventListener("click", () => {
+        sendActionRequest();
+        sendActionBtn.blur();
+      });
+    }
+    if (fetchStateBtn) {
+      fetchStateBtn.addEventListener("click", () => {
+        fetchStateRequest();
+        fetchStateBtn.blur();
+      });
+    }
+    if (startFramesBtn) {
+      startFramesBtn.addEventListener("click", () => {
+        startFrameStream();
+        startFramesBtn.blur();
+      });
+    }
+    if (stopFramesBtn) {
+      stopFramesBtn.addEventListener("click", () => {
+        stopFrameStream();
+        stopFramesBtn.blur();
+      });
+    }
+
+    window.addEventListener("beforeunload", () => {
+      if (frameEventSource) {
+        frameEventSource.close();
+      }
+    }, { once: true });
   }
 
   async function buildViewer() {
@@ -1167,6 +1339,23 @@ export function startSimulator(): void {
       });
 
       setupInputHandlers();
+
+      initExternalAPI(viewer, drone, keyState, () => {
+        Cesium.Cartographic.fromCartesian(
+          drone.position,
+          Cesium.Ellipsoid.WGS84,
+          scratch.cartographic,
+        );
+        return {
+          lat: Cesium.Math.toDegrees(scratch.cartographic.latitude),
+          lon: Cesium.Math.toDegrees(scratch.cartographic.longitude),
+          altAgl: Math.max(0, scratch.cartographic.height - drone.lastGroundHeight),
+          altMsl: scratch.cartographic.height,
+          heading: Cesium.Math.toDegrees(Cesium.Math.zeroToTwoPi(drone.heading)),
+          speed: Cesium.Cartesian3.magnitude(drone.horizontalVelocity),
+          timestamp: Date.now(),
+        };
+      });
 
       // Create the cloud fog overlay element
       cloudFogOverlay = createCloudFogOverlay();
