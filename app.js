@@ -236,6 +236,7 @@ import {
   // ### Runtime state for various systems
   let buildingCollisionActive = false;   // true when below activation altitude
   let lastBuildingHitDistance = Infinity; // distance to nearest forward obstacle
+  let blablabla=false;
 
   // Cloud fog state (white-out effect when flying through clouds)
   let cloudFogOverlay = null;
