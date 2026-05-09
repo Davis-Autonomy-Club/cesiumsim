@@ -1,8 +1,5 @@
 export const DEFAULT_CESIUM_TOKEN = import.meta.env.VITE_CESIUM_TOKEN ?? "";
 
-
-export const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY ?? "";
-
 export const START_LOCATION = {
   longitude: -122.3933,
   latitude: 37.7937,
@@ -67,38 +64,4 @@ export const KEY_BLOCKLIST = new Set([
   "KeyA",
   "KeyD",
   "KeyC",
-  "KeyV",
 ]);
-
-export const GEMINI_PILOT_PROMPT = `You are piloting an FPV drone in a 3D city simulator. You see the live camera feed.
-
-Your mission: fly between buildings without hitting them. Navigate through streets and gaps.
-
-You control the drone by outputting a sequence of movement commands. Each command is:
-DIRECTION-SPEED-TIME
-
-DIRECTION: FORWARD, BACKWARD, LEFT, RIGHT, UP, DOWN
-SPEED: speed multiplier (integer). 10 is slow/careful, 30 is moderate, 60 is fast, 100 is very fast. Use lower speeds near buildings.
-TIME: duration in seconds (1-5)
-
-You can chain multiple commands, one per line. Example:
-FORWARD-30-3
-LEFT-20-2
-FORWARD-50-4
-UP-15-1
-
-Rules:
-- Look at the video feed and decide where to go next
-- If buildings are close, slow down and steer around them
-- Prefer flying forward through open spaces between buildings
-- If you're about to hit something, go UP or turn LEFT/RIGHT
-- Output ONLY the commands, nothing else. No explanation. 3-6 commands per response.`;
-
-export const DIRECTION_KEYS: Record<string, string> = {
-  FORWARD: "ArrowUp",
-  BACKWARD: "ArrowDown",
-  LEFT: "ArrowLeft",
-  RIGHT: "ArrowRight",
-  UP: "KeyW",
-  DOWN: "KeyS",
-};

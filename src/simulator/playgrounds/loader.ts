@@ -14,7 +14,7 @@ export function loadPlayground(
   const obstacleEntities: any[] = [];
 
   for (const obs of playground.obstacles) {
-    const entities = createObstacleEntity(obs, playground);
+    const entities = createObstacleEntity(obs);
     for (const entity of entities) {
       viewer.entities.add(entity);
       obstacleEntities.push(entity);
@@ -42,7 +42,7 @@ export function unloadPlayground(
   }
 }
 
-function createObstacleEntity(obs: Obstacle, playground?: Playground): any[] {
+function createObstacleEntity(obs: Obstacle): any[] {
   const entities: any[] = [];
 
   const position = Cesium.Cartesian3.fromDegrees(
@@ -149,103 +149,6 @@ function createObstacleEntity(obs: Obstacle, playground?: Playground): any[] {
         outlineColor: color.brighten(0.5, new Cesium.Color()),
       },
     }));
-  }
-
-  else if (obs.type === "tree") {
-    // Trunk
-    let trunkMaterial = Cesium.Color.fromBytes(89, 63, 40, 230); // brown fallback
-
-    // B1 Zone Coloring
-    if (playground && playground.id === "mission-forest-supply-drop" && playground.zoneThresholds) {
-      const lon = obs.position.lon;
-      // Zone 1: Yellow, Zone 2: Green, Zone 3: Red (based on user request: "red green and yellow")
-      // User said: "make those zones red green and yellow... tree barks colored as per hte zone"
-      // Standard progression: Zone 1 -> Zone 2 -> Zone 3
-      // We'll map: Zone 1 (yellow), Zone 2 (green), Zone 3 (red)
-      const zone1 = playground.zoneThresholds.find(z => z.id === "zone1")?.minLon ?? -Infinity;
-      const zone2 = playground.zoneThresholds.find(z => z.id === "zone2")?.minLon ?? -Infinity;
-      const zone3 = playground.zoneThresholds.find(z => z.id === "zone3")?.minLon ?? -Infinity;
-
-      if (lon >= zone3) {
-        trunkMaterial = Cesium.Color.fromBytes(255, 50, 50, 255); // Red
-      } else if (lon >= zone2) {
-        trunkMaterial = Cesium.Color.fromBytes(50, 255, 50, 255); // Green
-      } else if (lon >= zone1) {
-        trunkMaterial = Cesium.Color.fromBytes(255, 230, 50, 255); // Yellow
-      }
-    }
-
-    entities.push(new Cesium.Entity({
-      position: Cesium.Cartesian3.fromDegrees(obs.position.lon, obs.position.lat, obs.position.height + obs.trunkHeight / 2),
-      cylinder: {
-        length: obs.trunkHeight,
-        topRadius: obs.trunkRadius,
-        bottomRadius: obs.trunkRadius,
-        material: trunkMaterial,
-      },
-    }));
-
-    // Canopy
-    const canopyHeight = obs.position.height + obs.trunkHeight + obs.canopyRadius * 0.7;
-    const canopyColor = obs.variant === "oak"
-      ? Cesium.Color.fromBytes(45, 100, 30, 220)   // dark green
-      : obs.variant === "cypress"
-        ? Cesium.Color.fromBytes(30, 80, 50, 220)    // deep green
-        : Cesium.Color.fromBytes(40, 110, 35, 220);  // pine green
-
-    entities.push(new Cesium.Entity({
-      position: Cesium.Cartesian3.fromDegrees(obs.position.lon, obs.position.lat, canopyHeight),
-      ellipsoid: {
-        radii: new Cesium.Cartesian3(obs.canopyRadius, obs.canopyRadius, obs.canopyRadius * 1.3),
-        material: canopyColor,
-      },
-    }));
-  }
-
-  else if (obs.type === "marker") {
-    const markerColor = getColor(obs.color);
-    const polePosition = Cesium.Cartesian3.fromDegrees(
-      obs.position.lon, obs.position.lat,
-      obs.position.height + obs.poleHeight / 2
-    );
-
-    // Pole
-    entities.push(new Cesium.Entity({
-      position: polePosition,
-      box: {
-        dimensions: new Cesium.Cartesian3(obs.poleWidth, obs.poleWidth, obs.poleHeight),
-        material: markerColor,
-        outline: true,
-        outlineColor: markerColor.brighten(0.3, new Cesium.Color()),
-      },
-    }));
-
-    // Flag at top
-    const flagPosition = Cesium.Cartesian3.fromDegrees(
-      obs.position.lon, obs.position.lat,
-      obs.position.height + obs.poleHeight + 1.5
-    );
-    entities.push(new Cesium.Entity({
-      position: flagPosition,
-      box: {
-        dimensions: new Cesium.Cartesian3(4, 0.2, 2.5),
-        material: markerColor,
-      },
-    }));
-
-    // Ground clearing disc (optional)
-    if (obs.hasClearingCircle && obs.clearingRadius) {
-      entities.push(new Cesium.Entity({
-        position: Cesium.Cartesian3.fromDegrees(obs.position.lon, obs.position.lat, obs.position.height + 0.05),
-        ellipse: {
-          semiMajorAxis: obs.clearingRadius,
-          semiMinorAxis: obs.clearingRadius,
-          material: markerColor.withAlpha(0.2),
-          outline: true,
-          outlineColor: markerColor,
-        },
-      }));
-    }
   }
 
   return entities;

@@ -39,45 +39,12 @@ export interface ObstacleRing {
   color?: ObstacleColor;
 }
 
-export interface ObstacleTree {
-  type: "tree";
-  position: { lon: number; lat: number; height: number };
-  trunkHeight: number;
-  trunkRadius: number;
-  canopyRadius: number;
-  variant?: "pine" | "oak" | "cypress";
-}
-
-export interface ObstacleMarker {
-  type: "marker";
-  id: string;
-  position: { lon: number; lat: number; height: number };
-  color: ObstacleColor;
-  poleHeight: number;
-  poleWidth: number;
-  hasClearingCircle?: boolean;
-  clearingRadius?: number;
-}
-
-export type Obstacle = ObstacleBox | ObstacleCylinder | ObstacleRing | ObstacleTree | ObstacleMarker;
+export type Obstacle = ObstacleBox | ObstacleCylinder | ObstacleRing;
 
 export interface Waypoint {
   id: string;
   position: { lon: number; lat: number; height: number };
   radius: number;
-}
-
-export interface MissionTarget {
-  id: string;
-  position: { lon: number; lat: number; height: number };
-  arrivalRadius: number;
-  isDistractor?: boolean;
-  label?: string;
-}
-
-export interface ZoneThreshold {
-  id: string;
-  minLon: number;
 }
 
 export interface Playground {
@@ -88,12 +55,4 @@ export interface Playground {
   obstacles: Obstacle[];
   waypoints?: Waypoint[];
   timeLimit?: number;
-  zoneThresholds?: ZoneThreshold[];
-}
-
-export interface MissionPlayground extends Playground {
-  missionType: "supply-drop" | "altitude-climb" | "target-id" | "multi-stop";
-  missionGoal: string;
-  missionTargets: MissionTarget[];
-  ascentTarget?: number;
 }

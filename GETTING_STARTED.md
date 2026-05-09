@@ -1,6 +1,6 @@
 # Getting Started with CesiumSim
 
-CesiumSim is a high-fidelity first-person drone simulator built with CesiumJS and Three.js. It features realistic drone physics, global 3D tiles from Google, and an AI-powered autopilot using Google Gemini.
+CesiumSim is a high-fidelity first-person drone simulator built with CesiumJS and Three.js. It features realistic drone physics and global 3D tiles from Google.
 
 ## 🚀 Quick Start
 
@@ -18,7 +18,6 @@ Create a `.env` file in the root directory (based on `.env.example` if available
 ```env
 VITE_CESIUM_TOKEN=your_cesium_token
 VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-VITE_GEMINI_API_KEY=your_gemini_api_key
 ```
 
 ### 4. Run the Simulator
@@ -35,8 +34,7 @@ Then open `http://localhost:5173` (or the port shown in your terminal).
   - `main.ts`: Entry point.
   - `simulator/`: Core simulator logic.
     - `simulator-app.ts`: Main simulator loop and initialization.
-    - `config.ts`: Physics constants, starting locations, and AI prompts.
-    - `gemini-controller.ts`: Integration with Google Gemini for autopilot.
+    - `config.ts`: Physics constants and starting locations.
     - `hud.ts`: Heads-up display management.
     - `playgrounds/`: Pre-defined challenge courses (Slalom, Maze, etc.).
   - `overlay/`: Geospatial rendering overlay using Three.js.
@@ -60,7 +58,6 @@ Then open `http://localhost:5173` (or the port shown in your terminal).
 ### System Controls
 - `1` / `2` / `3` / `4`: Change Speed Tier (1x, 3x, 5x, 10x)
 - `C`: Toggle FPV / Chase Camera
-- `V`: Toggle Gemini Autopilot
 - `R`: Reset to Spawn Point
 
 ---
@@ -72,7 +69,6 @@ Then open `http://localhost:5173` (or the port shown in your terminal).
 - **Vite**: Ultra-fast build tool and dev server.
 - **TypeScript**: Type-safe development.
 - **Google Photorealistic 3D Tiles**: High-resolution world geometry.
-- **Google Gemini 1.5 Pro**: Vision-language model for drone navigation.
 
 ---
 
@@ -83,9 +79,6 @@ Realistic drone flight model with horizontal/vertical drag, acceleration, and gr
 
 ### Geospatial Overlay
 A custom Three.js layer synchronized with the Cesium camera, providing physically-based atmospheric scattering, volumetric clouds, and cinematic lighting.
-
-### Gemini Autopilot
-Uses the Gemini 1.5 Pro API to "see" the simulator feed and navigate through city streets autonomously.
 
 ### Playgrounds
 Switch between the real world and custom-built challenge courses with waypoints and score tracking.
